@@ -701,6 +701,8 @@ struct ContentView: View {
                     .keyboardShortcut("k", modifiers: [])
                 Button("") { undo() }
                     .keyboardShortcut("z", modifiers: [.command])
+                Button("") { copyToClipboard() }
+                    .keyboardShortcut("c", modifiers: [.command])
                 if currentTool != .text {
                     Button("") { WindowManager.shared.hide() }
                         .keyboardShortcut(.escape, modifiers: [])

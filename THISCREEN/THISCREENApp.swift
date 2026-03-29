@@ -161,9 +161,12 @@ class StatusBarManager {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "viewfinder.circle.fill",
-                                   accessibilityDescription: "ThiScreen")
-            button.image?.size = NSSize(width: 22, height: 22)
+            let iconConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+            button.image = NSImage(
+                systemSymbolName: "viewfinder.circle.fill",
+                accessibilityDescription: "ThiScreen"
+            )?.withSymbolConfiguration(iconConfig)
+            button.imageScaling = .scaleProportionallyDown
             button.target = self
             button.action = #selector(statusBarButtonClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
