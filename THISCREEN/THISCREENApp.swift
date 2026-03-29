@@ -34,7 +34,10 @@ class WindowManager: NSObject, NSWindowDelegate {
         )
         window.contentViewController = hosting
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.title = "THISCREEN"
+        window.minSize = NSSize(width: 640, height: 480)
+        window.contentMinSize = NSSize(width: 640, height: 480)
         window.isReleasedWhenClosed = false   // ← KEY: window lives forever
         window.delegate = self
         window.center()

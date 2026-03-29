@@ -376,8 +376,9 @@ struct ContentView: View {
                             zoomScale = max(0.25, min(5.0, newScale))
                         }
                         .onEnded { _ in baseZoomScale = zoomScale })
-                    .mouseWheelZoom(zoomScale: $zoomScale, baseZoomScale: $baseZoomScale)
+                    
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 VStack {
                     Spacer()
                     VStack(spacing: 8) {
@@ -486,26 +487,6 @@ struct ContentView: View {
                                 .frame(width: 38)
                             }
                         }.padding(.bottom, 8)
-                        .overlay(alignment: .leading) {
-                            // Validated Drag handle for moving the window
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .opacity(0.4)
-                                .padding(.leading, -16)
-                                .contentShape(Rectangle())
-                                .onDrag { NSItemProvider(object: "drag" as NSString) } // Placeholder for visual, but we use mouseDown
-                                .onTapGesture { } // Consume to avoid pass-through
-                                .gesture(
-                                    DragGesture(minimumDistance: 0)
-                                        .onChanged { _ in
-                                            if let window = NSApp.keyWindow {
-                                                window.performDrag(with: NSApp.currentEvent!)
-                                            }
-                                        }
-                                )
-                        }
-                    }
                     .padding(.horizontal, 16)
                     .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 32))
@@ -537,7 +518,8 @@ struct ContentView: View {
             }
             .allowsHitTesting(false)
             .zIndex(2000)
-            
+        }
+
             } else { // Close of if-let img
                 VStack(spacing: 16) {
                     Image(systemName: "camera.viewfinder")
@@ -577,6 +559,8 @@ struct ContentView: View {
                     .keyboardShortcut("t", modifiers: [])
                 Button("") { currentTool = .crop }
                     .keyboardShortcut("k", modifiers: [])
+                Button("") { undo() }
+                    .keyboardShortcut("z", modifiers: [.command])
                 Button("") { WindowManager.shared.hide() }
                     .keyboardShortcut(.escape, modifiers: [])
             }
