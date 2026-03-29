@@ -87,17 +87,18 @@ class CaptureManager: ObservableObject {
         var args = ["-v"]
         
         switch mode {
-        case .entireScreen: break
-        case .selectedArea: args.append("-i")
-        case .currentCrop: args.append("-i")
+        case .entireScreen:
+            break
+        case .selectedArea, .currentCrop:
+            // Force the interactive UI to start directly in video mode.
+            args.append(contentsOf: ["-J", "video", "-i"])
         }
         
         if showClicks { args.append("-k") }
         if includeMic { args.append("-g") }
-        let videoUrl = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ThiScreen_recording.mov")
+        let videoUrl = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("THISCREEN_recording.mov")
         try? FileManager.default.removeItem(at: videoUrl)
         
-        args.append("-U")
         args.append(videoUrl.path)
         
         let process = Process()
@@ -115,7 +116,7 @@ class CaptureManager: ObservableObject {
                 try process.run()
                 process.waitUntilExit()
                 
-                let videoPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ThiScreen_recording.mov").path
+                let videoPath = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("THISCREEN_recording.mov").path
                 let videoExists = FileManager.default.fileExists(atPath: videoPath)
                 
                 DispatchQueue.main.async {

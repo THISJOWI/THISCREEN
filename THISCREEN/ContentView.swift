@@ -428,6 +428,7 @@ struct ContentView: View {
     @State private var showRecordingTooltip: Bool = false
     @State private var showSaveTooltip: Bool = false
     @State private var showCaptureTooltip: Bool = false
+    @State private var localKeyMonitor: Any? = nil
     
     var body: some View {
         ZStack {
@@ -703,6 +704,12 @@ struct ContentView: View {
                     .keyboardShortcut("z", modifiers: [.command])
                 Button("") { copyToClipboard() }
                     .keyboardShortcut("c", modifiers: [.command])
+                Button("") { saveToFile() }
+                    .keyboardShortcut("s", modifiers: [.command])
+                Button("") { saveToSuggested(directory: .desktopDirectory) }
+                    .keyboardShortcut("d", modifiers: [.command])
+                Button("") { saveToSuggested(directory: .downloadsDirectory) }
+                    .keyboardShortcut("l", modifiers: [.command])
                 if currentTool != .text {
                     Button("") { WindowManager.shared.hide() }
                         .keyboardShortcut(.escape, modifiers: [])
@@ -763,6 +770,34 @@ struct ContentView: View {
                 saveVideoWithDialog()
             }
         }
+        .onAppear {
+            if localKeyMonitor == nil {
+                localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                    guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) else {
+                        return event
+                    }
+                    switch event.charactersIgnoringModifiers?.lowercased() {
+                    case "s":
+                        saveToFile()
+                        return nil
+                    case "d":
+                        saveToSuggested(directory: .desktopDirectory)
+                        return nil
+                    case "l":
+                        saveToSuggested(directory: .downloadsDirectory)
+                        return nil
+                    default:
+                        return event
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            if let monitor = localKeyMonitor {
+                NSEvent.removeMonitor(monitor)
+                localKeyMonitor = nil
+            }
+        }
     }
     
     func saveVideoTo(directory: FileManager.SearchPathDirectory) {
@@ -773,13 +808,15 @@ struct ContentView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        let dest = dir.appendingPathComponent("ThiScreen_Recording_\(timestamp).mov")
+        let dest = dir.appendingPathComponent("THISCREEN_Recording_\(timestamp).mov")
 
         do {
             try FileManager.default.copyItem(at: url, to: dest)
             NSWorkspace.shared.activateFileViewerSelecting([dest])
+            showSaveFeedback("Guardado en \(dest.path)")
         } catch {
             print("Error saving video to \(directory): \(error)")
+            saveVideoWithDialog(defaultDirectory: dir)
         }
     }
     
@@ -788,22 +825,27 @@ struct ContentView: View {
             saveVideoTo(directory: directory)
             return
         }
-        guard let finalImage = generateFinalImage() else { return }
+        guard let finalImage = generateFinalImage() else {
+            showSaveFeedback("No hay captura o grabacion para guardar.")
+            return
+        }
         let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
 
         // Use formatted timestamp for better readability
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        let url = dir.appendingPathComponent("ThiScreen_\(timestamp).png")
+        let url = dir.appendingPathComponent("THISCREEN_\(timestamp).png")
 
         do {
             if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
                 try pngData.write(to: url)
                 NSWorkspace.shared.activateFileViewerSelecting([url])
+                showSaveFeedback("Guardado en \(url.path)")
             }
         } catch {
             print("Error saving image to \(directory): \(error)")
+            saveImageWithDialog(defaultDirectory: dir, image: finalImage)
         }
     }
     
@@ -812,6 +854,10 @@ struct ContentView: View {
     }
 
     func saveVideoWithDialog() {
+        saveVideoWithDialog(defaultDirectory: FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first)
+    }
+
+    private func saveVideoWithDialog(defaultDirectory: URL?) {
         guard let url = captureManager.lastVideoUrl else { return }
 
         let savePanel = NSSavePanel()
@@ -822,20 +868,38 @@ struct ContentView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        savePanel.nameFieldStringValue = "ThiScreen_Recording_\(timestamp).mov"
+        savePanel.nameFieldStringValue = "THISCREEN_Recording_\(timestamp).mov"
 
         // Set default directory to Movies
-        if let moviesURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
-            savePanel.directoryURL = moviesURL
+        if let defaultDirectory {
+            savePanel.directoryURL = defaultDirectory
         }
 
-        savePanel.begin { res in
-            if res == .OK, let dest = savePanel.url {
-                do {
-                    try FileManager.default.copyItem(at: url, to: dest)
-                    NSWorkspace.shared.activateFileViewerSelecting([dest])
-                } catch {
-                    print("Error saving video: \(error)")
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            savePanel.beginSheetModal(for: window) { res in
+                if res == .OK, let dest = savePanel.url {
+                    do {
+                        try FileManager.default.copyItem(at: url, to: dest)
+                        NSWorkspace.shared.activateFileViewerSelecting([dest])
+                        self.showSaveFeedback("Guardado en \(dest.path)")
+                    } catch {
+                        print("Error saving video: \(error)")
+                        self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
+                    }
+                }
+            }
+        } else {
+            savePanel.begin { res in
+                if res == .OK, let dest = savePanel.url {
+                    do {
+                        try FileManager.default.copyItem(at: url, to: dest)
+                        NSWorkspace.shared.activateFileViewerSelecting([dest])
+                        self.showSaveFeedback("Guardado en \(dest.path)")
+                    } catch {
+                        print("Error saving video: \(error)")
+                        self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -953,34 +1017,79 @@ struct ContentView: View {
             saveVideoWithDialog()
             return
         }
-        guard let finalImage = generateFinalImage() else { return }
+        guard let finalImage = generateFinalImage() else {
+            showSaveFeedback("No hay captura o grabacion para guardar.")
+            return
+        }
 
+        saveImageWithDialog(defaultDirectory: FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first, image: finalImage)
+    }
+
+    private func saveImageWithDialog(defaultDirectory: URL?, image: NSImage) {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.png]
         savePanel.canCreateDirectories = true
 
-        // Set default filename with formatted timestamp
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        savePanel.nameFieldStringValue = "ThiScreen_\(timestamp).png"
+        savePanel.nameFieldStringValue = "THISCREEN_\(timestamp).png"
 
-        // Set default directory to Pictures
-        if let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first {
-            savePanel.directoryURL = picturesURL
+        if let defaultDirectory {
+            savePanel.directoryURL = defaultDirectory
         }
 
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                do {
-                    if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
-                        try pngData.write(to: url)
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            savePanel.beginSheetModal(for: window) { response in
+                if response == .OK, let url = savePanel.url {
+                    do {
+                        if let data = image.tiffRepresentation,
+                           let rep = NSBitmapImageRep(data: data),
+                           let pngData = rep.representation(using: .png, properties: [:]) {
+                            try pngData.write(to: url)
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                            self.showSaveFeedback("Guardado en \(url.path)")
+                        }
+                    } catch {
+                        print("Error saving image: \(error)")
+                        self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
                     }
-                } catch {
-                    print("Error saving image: \(error)")
                 }
             }
+        } else {
+            savePanel.begin { response in
+                if response == .OK, let url = savePanel.url {
+                    do {
+                        if let data = image.tiffRepresentation,
+                           let rep = NSBitmapImageRep(data: data),
+                           let pngData = rep.representation(using: .png, properties: [:]) {
+                            try pngData.write(to: url)
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                            self.showSaveFeedback("Guardado en \(url.path)")
+                        }
+                    } catch {
+                        print("Error saving image: \(error)")
+                        self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func showSaveFeedback(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "THISCREEN"
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 }

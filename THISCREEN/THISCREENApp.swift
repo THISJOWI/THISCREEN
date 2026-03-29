@@ -164,7 +164,7 @@ class StatusBarManager {
             let iconConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
             button.image = NSImage(
                 systemSymbolName: "viewfinder.circle.fill",
-                accessibilityDescription: "ThiScreen"
+                accessibilityDescription: "THISCREEN"
             )?.withSymbolConfiguration(iconConfig)
             button.imageScaling = .scaleProportionallyDown
             button.target = self
@@ -186,7 +186,7 @@ class StatusBarManager {
     private func setupMenu() {
         let menu = NSMenu()
 
-        let openItem = NSMenuItem(title: "Open ThiScreen Editor",
+        let openItem = NSMenuItem(title: "Open THISCREEN Editor",
                                   action: #selector(openEditor),
                                   keyEquivalent: "e")
         openItem.keyEquivalentModifierMask = [.command, .shift]
@@ -220,7 +220,7 @@ class StatusBarManager {
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit ThiScreen",
+        let quitItem = NSMenuItem(title: "Quit THISCREEN",
                                   action: #selector(quitApp),
                                   keyEquivalent: "q")
         quitItem.target = self
