@@ -15,6 +15,7 @@ class WindowManager: NSObject, NSWindowDelegate {
 
     private var windowController: NSWindowController?
     private(set) var isVisible = false
+    private var isApplyingFrameUpdate = false
 
     // Call once at startup to create the window (hidden)
     func createWindow(captureManager: CaptureManager) {
@@ -62,6 +63,17 @@ class WindowManager: NSObject, NSWindowDelegate {
     func show() {
         guard let window = windowController?.window else { return }
         configureOverlay(window)
+        
+        let hasActiveContent = (CaptureManager.shared.screenshot != nil) || (CaptureManager.shared.lastVideoUrl != nil)
+        let isTooSmall = window.frame.width < 760 || window.frame.height < 520
+        
+        // If the editor has no active capture/video, always restore a comfortable default size.
+        // Also recover from any collapsed/tiny window state.
+        if !hasActiveContent || isTooSmall {
+            window.setContentSize(NSSize(width: 900, height: 620))
+            window.center()
+        }
+        
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
@@ -75,6 +87,8 @@ class WindowManager: NSObject, NSWindowDelegate {
             show()
             return
         }
+        
+        if isApplyingFrameUpdate { return }
 
         let toolbarHeight: CGFloat = 110   // Reduced estimate for toolbar area
         let horizontalPadding: CGFloat = 40
@@ -107,7 +121,11 @@ class WindowManager: NSObject, NSWindowDelegate {
         let newFrame = NSRect(x: x, y: y, width: finalW, height: finalH)
 
         configureOverlay(window)
-        window.setFrame(newFrame, display: true, animate: true)
+        isApplyingFrameUpdate = true
+        window.setFrame(newFrame, display: true, animate: false)
+        DispatchQueue.main.async { [weak self] in
+            self?.isApplyingFrameUpdate = false
+        }
         
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)

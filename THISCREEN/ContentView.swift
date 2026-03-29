@@ -163,6 +163,9 @@ struct InteractiveDrawingView: View {
                 Button("") { deleteSelectedElement() }.keyboardShortcut(.delete, modifiers: [])
                 Button("") { deleteSelectedElement() }.keyboardShortcut("x", modifiers: [.command])
                 Button("") { deleteSelectedElement() }.keyboardShortcut(.init("\u{7F}"), modifiers: []) 
+                if textInputLocation != nil || currentTool == .text {
+                    Button("") { cancelTextEditing() }.keyboardShortcut(.escape, modifiers: [])
+                }
             }
             .opacity(0)
         )
@@ -170,6 +173,15 @@ struct InteractiveDrawingView: View {
     
     private func deleteSelectedElement() {
         if let selectedID = selectedElementID { withAnimation { elements.removeAll(where: { $0.id == selectedID }); selectedElementID = nil } }
+    }
+
+    private func cancelTextEditing() {
+        textInputLocation = nil
+        textInputBuffer = ""
+        isTextFieldFocused = false
+        if currentTool == .text {
+            currentTool = .select
+        }
     }
     
     private func findElementAt(_ point: CGPoint) {
@@ -294,12 +306,13 @@ struct ToolButton: View {
 }
 
 struct AppState: Equatable {
-    var screenshot: NSImage?
+    var screenshotPNGData: Data?
     var elements: [DrawnElement]
 }
 
 struct ContentView: View {
     @EnvironmentObject var captureManager: CaptureManager
+    private let maxHistoryStates = 8
     
     @State private var elements: [DrawnElement] = []
     @State private var redoStack: [DrawnElement] = []
@@ -378,7 +391,7 @@ struct ContentView: View {
                         .onEnded { _ in baseZoomScale = zoomScale })
                     
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack {
                     Spacer()
                     VStack(spacing: 8) {
@@ -491,7 +504,9 @@ struct ContentView: View {
                     .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 32))
                     .shadow(radius: 20)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 8)
+                    .padding(.horizontal, 8)
+                    }
                 }
             // GLOBAL TOOLTIPS (Above everything else)
             VStack {
@@ -514,11 +529,10 @@ struct ContentView: View {
                             .transition(.opacity)
                     }
                 }
-                .padding(.bottom, 110) // Positioned above the toolbar
+                .padding(.bottom, 92) // Positioned above the bottom toolbar
             }
             .allowsHitTesting(false)
             .zIndex(2000)
-        }
 
             } else { // Close of if-let img
                 VStack(spacing: 16) {
@@ -561,8 +575,10 @@ struct ContentView: View {
                     .keyboardShortcut("k", modifiers: [])
                 Button("") { undo() }
                     .keyboardShortcut("z", modifiers: [.command])
-                Button("") { WindowManager.shared.hide() }
-                    .keyboardShortcut(.escape, modifiers: [])
+                if currentTool != .text {
+                    Button("") { WindowManager.shared.hide() }
+                        .keyboardShortcut(.escape, modifiers: [])
+                }
             }
             .opacity(0)
         )
@@ -575,16 +591,30 @@ struct ContentView: View {
                 self.historyStack.removeAll()
                 self.zoomScale = 1.0
                 if let newImg = captureManager.screenshot {
-                    self.pixelatedImage = createPixelatedNSImage(from: newImg)
+                    self.pixelatedImage = nil
                     self.captureManager.lastVideoUrl = nil
                 } else {
                     self.pixelatedImage = nil
                 }
                 self.cropRect = nil
             }
-            // Show the editor window sized to fit the captured screenshot
+            // Resize on next runloop tick to avoid AppKit constraint recursion.
             if let img = captureManager.screenshot {
-                WindowManager.shared.showFitting(image: img)
+                DispatchQueue.main.async {
+                    WindowManager.shared.showFitting(image: img)
+                }
+            }
+        }
+        .onChange(of: currentTool) {
+            updatePixelatedImageCacheIfNeeded()
+        }
+        .onChange(of: elements) {
+            updatePixelatedImageCacheIfNeeded()
+        }
+        .onChange(of: captureManager.lastVideoUrl) {
+            if captureManager.lastVideoUrl == nil {
+                player?.pause()
+                player = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerShowWindow"))) { _ in
@@ -698,10 +728,49 @@ struct ContentView: View {
         return NSImage(cgImage: cgImg, size: image.size)
     }
     
+    private func makePNGData(from image: NSImage?) -> Data? {
+        guard
+            let image,
+            let tiff = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let pngData = bitmap.representation(using: .png, properties: [:])
+        else {
+            return nil
+        }
+        return pngData
+    }
+    
+    private func imageFromPNGData(_ data: Data?) -> NSImage? {
+        guard let data else { return nil }
+        return NSImage(data: data)
+    }
+    
+    private func pushHistoryState() {
+        historyStack.append(AppState(screenshotPNGData: makePNGData(from: captureManager.screenshot), elements: elements))
+        if historyStack.count > maxHistoryStates {
+            historyStack.removeFirst(historyStack.count - maxHistoryStates)
+        }
+    }
+    
+    private func updatePixelatedImageCacheIfNeeded() {
+        guard let screenshot = captureManager.screenshot else {
+            pixelatedImage = nil
+            return
+        }
+        let needsPixelatedCache = currentTool == .pixelate || elements.contains(where: { $0.tool == .pixelate })
+        if needsPixelatedCache {
+            if pixelatedImage == nil {
+                pixelatedImage = createPixelatedNSImage(from: screenshot)
+            }
+        } else {
+            pixelatedImage = nil
+        }
+    }
+    
     func applyCrop() {
         guard let img = captureManager.screenshot, let crop = cropRect else { return }
         
-        historyStack.append(AppState(screenshot: captureManager.screenshot, elements: elements))
+        pushHistoryState()
         
         let targetSize = crop.size
         let renderer = ImageRenderer(content: ZStack {
@@ -715,7 +784,7 @@ struct ContentView: View {
                 captureManager.screenshot = newScreenshot
                 self.elements.removeAll()
                 self.redoStack.removeAll()
-                self.pixelatedImage = createPixelatedNSImage(from: newScreenshot)
+                self.pixelatedImage = nil
                 self.cropRect = nil
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { ignoreChanges = false }
@@ -726,9 +795,10 @@ struct ContentView: View {
         if let lastElement = elements.popLast() { redoStack.append(lastElement) } 
         else if let lastState = historyStack.popLast() { 
             ignoreChanges = true
-            captureManager.screenshot = lastState.screenshot
+            captureManager.screenshot = imageFromPNGData(lastState.screenshotPNGData)
             elements = lastState.elements
-            pixelatedImage = captureManager.screenshot.map { createPixelatedNSImage(from: $0) } ?? nil 
+            pixelatedImage = nil
+            updatePixelatedImageCacheIfNeeded()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { ignoreChanges = false }
         }
     }
