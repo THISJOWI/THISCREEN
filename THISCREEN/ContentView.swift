@@ -271,37 +271,131 @@ struct ToolTooltip: View {
 
 // MARK: - Tool Button
 
+struct GlassIconButton: View {
+    let systemName: String
+    let size: CGFloat
+    let tint: Color
+    let isSelected: Bool
+    let disabled: Bool
+    let action: () -> Void
+    var onHoverChanged: ((Bool) -> Void)? = nil
+
+    @State private var isHovered = false
+    @State private var dragOffset: CGSize = .zero
+    @State private var isDragging = false
+
+    init(
+        systemName: String,
+        size: CGFloat = 42,
+        tint: Color = .white,
+        isSelected: Bool = false,
+        disabled: Bool = false,
+        action: @escaping () -> Void,
+        onHoverChanged: ((Bool) -> Void)? = nil
+    ) {
+        self.systemName = systemName
+        self.size = size
+        self.tint = tint
+        self.isSelected = isSelected
+        self.disabled = disabled
+        self.action = action
+        self.onHoverChanged = onHoverChanged
+    }
+
+    var body: some View {
+        Button(action: action) {
+            GlassIcon(
+                systemName: systemName,
+                size: size,
+                tint: tint,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                disabled: disabled
+            )
+                .scaleEffect(isHovered ? 1.04 : 1.0)
+                .scaleEffect(isDragging ? 0.97 : 1.0)
+                .offset(dragOffset)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .animation(.spring(response: 0.24, dampingFraction: 0.72), value: isSelected)
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .animation(.spring(response: 0.2, dampingFraction: 0.78), value: dragOffset)
+        .onHover { hovering in
+            isHovered = hovering
+            onHoverChanged?(hovering)
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    isDragging = true
+                    let limit: CGFloat = 6
+                    dragOffset = CGSize(
+                        width: min(max(value.translation.width, -limit), limit),
+                        height: min(max(value.translation.height, -limit), limit)
+                    )
+                }
+                .onEnded { _ in
+                    isDragging = false
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                        dragOffset = .zero
+                    }
+                }
+        )
+    }
+}
+
+struct GlassIcon: View {
+    let systemName: String
+    let size: CGFloat
+    let tint: Color
+    let isSelected: Bool
+    let isHovered: Bool
+    let disabled: Bool
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 18, weight: .medium))
+            .foregroundColor(disabled ? .secondary.opacity(0.45) : (isSelected ? .white : tint.opacity(0.95)))
+            .frame(width: size, height: size)
+            .background(
+                ZStack {
+                    Circle().fill(.ultraThinMaterial)
+                    Circle().fill(
+                        LinearGradient(
+                            colors: [.white.opacity(isSelected ? 0.33 : 0.18), .white.opacity(0.07), .clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    if isSelected {
+                        Circle().fill(Color.accentColor.opacity(0.58))
+                    }
+                }
+            )
+            .overlay(
+                Circle()
+                    .stroke(.white.opacity(isSelected ? 0.45 : (isHovered ? 0.28 : 0.16)), lineWidth: 0.9)
+            )
+            .shadow(color: .black.opacity(0.22), radius: 8, y: 4)
+    }
+}
+
 struct ToolButton: View {
     let tool: DrawingTool
     let isSelected: Bool
     let action: () -> Void
-    @State private var isHovered = false
     let onHoverChange: (Bool) -> Void
     
     var body: some View {
-        Button(action: action) {
-            Image(systemName: tool.rawValue)
-                .font(.system(size: 18))
-                .foregroundColor(isSelected ? .white : .primary)
-                .frame(width: 44, height: 44)
-                .background(ZStack {
-                    if isSelected {
-                        Circle().fill(Color.accentColor)
-                            .shadow(color: Color.accentColor.opacity(0.4), radius: 8, y: 4)
-                    } else {
-                        Circle().fill(isHovered ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
-                    }
-                })
-                .overlay(Circle().stroke(Color.white.opacity(isHovered ? 0.25 : 0.1), lineWidth: 0.5))
-                .scaleEffect(isHovered ? 1.05 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
-        .animation(.easeOut(duration: 0.1), value: isHovered)
-        .onHover { hovering in 
-            isHovered = hovering 
-            onHoverChange(hovering)
-        }
+        GlassIconButton(
+            systemName: tool.rawValue,
+            size: 42,
+            tint: .white,
+            isSelected: isSelected,
+            action: action,
+            onHoverChanged: onHoverChange
+        )
     }
 }
 
@@ -409,16 +503,14 @@ struct ContentView: View {
                             Image(systemName: "line.diagonal"); Slider(value: $currentLineWidth, in: 2...60).frame(width: 80)
                         }.padding(.top, captureManager.isRecording || currentTool == .crop ? 0 : 8)
                         
-                        HStack(spacing: 6) {
-                            Button(action: { captureManager.takeScreenshot() }) {
-                                Image(systemName: "camera.viewfinder")
-                                    .font(.system(size: 20, weight: .bold))
-                                    .foregroundColor(.accentColor)
-                                    .frame(width: 44, height: 44)
-                                    .background(Circle().fill(Color.white.opacity(0.1)))
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { showCaptureTooltip = $0 }
+                        HStack(spacing: 8) {
+                            GlassIconButton(
+                                systemName: "camera.viewfinder",
+                                size: 44,
+                                tint: .accentColor,
+                                action: { captureManager.takeScreenshot() },
+                                onHoverChanged: { showCaptureTooltip = $0 }
+                            )
                             
                             Divider().frame(height: 24).padding(.horizontal, 4)
                             
@@ -438,16 +530,6 @@ struct ContentView: View {
                                 
                                 if !captureManager.isRecording {
                                     HStack(spacing: 12) {
-                                        if currentTool == .crop {
-                                            Button(action: applyCrop) { 
-                                                Image(systemName: "checkmark.seal.fill")
-                                                    .foregroundColor(.orange)
-                                                    .font(.system(size: 24)) 
-                                            }
-                                            .buttonStyle(.plain)
-                                            .keyboardShortcut(.return, modifiers: [])
-                                        }
-                                        
                                         Menu {
                                             Button(action: { captureManager.startRecording(mode: .entireScreen, includeMic: includeMic, showClicks: showClicks) }) {
                                                 Label("Record Entire Screen", systemImage: "macwindow")
@@ -456,12 +538,17 @@ struct ContentView: View {
                                                 Label("Record Selected Area", systemImage: "rectangle.dashed.badge.record")
                                             }
                                         } label: {
-                                            Image(systemName: "video.fill")
-                                                .foregroundColor(.red)
-                                                .font(.system(size: 22))
+                                            GlassIcon(
+                                                systemName: "video.fill",
+                                                size: 40,
+                                                tint: .red,
+                                                isSelected: false,
+                                                isHovered: false,
+                                                disabled: false
+                                            )
                                         }
                                         .menuStyle(.borderlessButton)
-                                        .frame(width: 32)
+                                        .frame(width: 40, height: 40)
                                     }
                                 } else {
                                     Button(action: { captureManager.stopRecording() }) { 
@@ -491,18 +578,57 @@ struct ContentView: View {
                                     Button("Custom Location... (Cmd+S)") { saveToFile() }
 
                                 } label: {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 30, weight: .bold))
-                                        .foregroundColor(.green)
+                                    GlassIcon(
+                                        systemName: "checkmark.circle.fill",
+                                        size: 42,
+                                        tint: .green,
+                                        isSelected: false,
+                                        isHovered: false,
+                                        disabled: false
+                                    )
                                 }
                                 .menuStyle(.borderlessButton)
                                 .onHover { showSaveTooltip = $0 }
-                                .frame(width: 38)
+                                .frame(width: 42, height: 42)
                             }
-                        }.padding(.bottom, 8)
+                        }
+                        .padding(.vertical, 6)
                     .padding(.horizontal, 16)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 32))
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            .white.opacity(0.28),
+                                            .white.opacity(0.08),
+                                            .clear
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .blendMode(.screen)
+                            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [
+                                            .white.opacity(0.55),
+                                            .white.opacity(0.18)
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    lineWidth: 1
+                                )
+                            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                                .stroke(.black.opacity(0.14), lineWidth: 0.5)
+                                .offset(y: 1)
+                        }
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
                     .shadow(radius: 20)
                     .padding(.bottom, 8)
                     .padding(.horizontal, 8)
@@ -590,20 +716,14 @@ struct ContentView: View {
                 self.redoStack.removeAll()
                 self.historyStack.removeAll()
                 self.zoomScale = 1.0
-                if let newImg = captureManager.screenshot {
-                    self.pixelatedImage = nil
+                self.pixelatedImage = nil
+                if captureManager.screenshot != nil {
                     self.captureManager.lastVideoUrl = nil
-                } else {
-                    self.pixelatedImage = nil
                 }
                 self.cropRect = nil
             }
-            // Resize on next runloop tick to avoid AppKit constraint recursion.
-            if let img = captureManager.screenshot {
-                DispatchQueue.main.async {
-                    WindowManager.shared.showFitting(image: img)
-                }
-            }
+            // Keep window sizing stable. Aggressive re-fitting here can trigger
+            // AppKit/SwiftUI layout recursion on some macOS versions.
         }
         .onChange(of: currentTool) {
             updatePixelatedImageCacheIfNeeded()
@@ -864,8 +984,20 @@ struct ContentView: View {
 }
 
 struct ActionButton: View {
-    let systemName: String; let action: () -> Void; var disabled: Bool = false
-    var body: some View { Button(action: action) { Image(systemName: systemName).font(.system(size: 14)).foregroundColor(.primary.opacity(disabled ? 0.3 : 0.8)).frame(width: 32, height: 32).background(Circle().fill(.white.opacity(0.05))) }.buttonStyle(.plain).disabled(disabled) }
+    let systemName: String
+    let action: () -> Void
+    var disabled: Bool = false
+
+    var body: some View {
+        GlassIconButton(
+            systemName: systemName,
+            size: 36,
+            tint: .white,
+            isSelected: false,
+            disabled: disabled,
+            action: action
+        )
+    }
 }
 
 // MARK: - Mouse Wheel Zoom Support
