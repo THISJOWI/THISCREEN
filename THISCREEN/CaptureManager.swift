@@ -122,10 +122,12 @@ class CaptureManager: ObservableObject {
                     self.isRecording = false
                     self.isInProgress = false
                     self.activeRecordingProcess = nil
-                    
+
                     if videoExists {
-                        self.screenshot = nil 
+                        self.screenshot = nil
                         self.lastVideoUrl = URL(fileURLWithPath: videoPath)
+                        // Post notification to trigger save dialog automatically
+                        NotificationCenter.default.post(name: NSNotification.Name("TriggerAutoSaveVideo"), object: nil)
                     }
                     self.bringToFront()
                 }
@@ -149,21 +151,8 @@ class CaptureManager: ObservableObject {
     
     private func bringToFront() {
         DispatchQueue.main.async {
-            // Unhide the app first
-            NSApp.unhide(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            
-            // Find the main window (not status bar)
-            let windows = NSApp.windows.filter { !String(describing: type(of: $0)).contains("StatusBar") }
-            
-            if let window = windows.first {
-                // Window exists, make sure it's visible and front
-                window.makeKeyAndOrderFront(nil)
-                window.orderFrontRegardless()
-            } else {
-                // No window found, trigger open via notification
-                NotificationCenter.default.post(name: NSNotification.Name("TriggerShowWindow"), object: nil)
-            }
+            // WindowManager owns a permanent NSWindow — always works even after close
+            WindowManager.shared.show()
         }
     }
 }

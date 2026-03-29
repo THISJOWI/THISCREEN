@@ -2,204 +2,210 @@
 //  THISCREENApp.swift
 //  THISCREEN
 //
-//  Created by joel mendez cruz on 28/3/26.
-//
 
 import SwiftUI
 import AppKit
+
+// MARK: - Window Manager
+// Owns a single NSWindow for the lifetime of the app.
+// Never destroys it — just shows/hides it — so it always reopens correctly.
+
+class WindowManager: NSObject, NSWindowDelegate {
+    static let shared = WindowManager()
+
+    private var windowController: NSWindowController?
+    private(set) var isVisible = false
+
+    // Call once at startup to create the window (hidden)
+    func createWindow(captureManager: CaptureManager) {
+        guard windowController == nil else { return }
+
+        let rootView = ContentView()
+            .environmentObject(captureManager)
+
+        let hosting = NSHostingController(rootView: rootView)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = hosting
+        window.titlebarAppearsTransparent = true
+        window.title = "THISCREEN"
+        window.isReleasedWhenClosed = false   // ← KEY: window lives forever
+        window.delegate = self
+        window.center()
+
+        configureOverlay(window)
+
+        windowController = NSWindowController(window: window)
+        // Start hidden — no "Ready for Capture" screen at launch
+    }
+
+    // MARK: Overlay configuration
+    func configureOverlay(_ window: NSWindow) {
+        // Above .floating and .statusBar — appears over full‑screen apps
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.isMovable = true
+        window.isMovableByWindowBackground = true
+        window.hidesOnDeactivate = false
+    }
+
+    // MARK: Show / Hide
+    func show() {
+        guard let window = windowController?.window else { return }
+        configureOverlay(window)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        isVisible = true
+    }
+
+    func hide() {
+        windowController?.window?.orderOut(nil)
+        isVisible = false
+    }
+
+    // MARK: NSWindowDelegate — intercept close button (keep alive)
+    func windowWillClose(_ notification: Notification) {
+        isVisible = false
+        // Don't quit — just hide the window so it can reopen
+    }
+}
+
+// MARK: - Status Bar
 
 class StatusBarManager {
     static let shared = StatusBarManager()
     private var statusItem: NSStatusItem?
     private var captureManager: CaptureManager?
-    
+
     func setup(captureManager: CaptureManager) {
-        // Avoid creating duplicate status items
         guard statusItem == nil else {
             self.captureManager = captureManager
             return
         }
-        
         self.captureManager = captureManager
-        
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "viewfinder.circle.fill", accessibilityDescription: "ThiScreen")
+            button.image = NSImage(systemSymbolName: "viewfinder.circle.fill",
+                                   accessibilityDescription: "ThiScreen")
             button.image?.size = NSSize(width: 22, height: 22)
             button.target = self
             button.action = #selector(statusBarButtonClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        
         setupMenu()
     }
-    
+
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
-        let event = NSApp.currentEvent!
-        
+        guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
-            // Right click shows menu
             statusItem?.menu?.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         } else {
-            // Left click opens window
-            NSApp.activate(ignoringOtherApps: true)
-            
-            // Try to bring existing window to front, or trigger open
-            if let window = NSApp.windows.first(where: { !String(describing: type(of: $0)).contains("StatusBar") }) {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                NotificationCenter.default.post(name: NSNotification.Name("TriggerShowWindow"), object: nil)
-            }
+            WindowManager.shared.show()
         }
     }
-    
+
     private func setupMenu() {
         let menu = NSMenu()
-        
-        let openItem = NSMenuItem(title: "Open ThiScreen Editor", action: #selector(openEditor), keyEquivalent: "e")
+
+        let openItem = NSMenuItem(title: "Open ThiScreen Editor",
+                                  action: #selector(openEditor),
+                                  keyEquivalent: "e")
         openItem.keyEquivalentModifierMask = [.command, .shift]
         openItem.target = self
         menu.addItem(openItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        let captureItem = NSMenuItem(title: "Capture Area", action: #selector(captureArea), keyEquivalent: "s")
-        captureItem.keyEquivalentModifierMask = [.command, .shift]
+
+        menu.addItem(.separator())
+
+        let captureItem = NSMenuItem(title: "Capture Area (⌘⇧S)",
+                                     action: #selector(captureArea),
+                                     keyEquivalent: "")
         captureItem.target = self
         menu.addItem(captureItem)
-        
+
         let recordMenu = NSMenu()
-        
-        let entireRecordItem = NSMenuItem(title: "Entire Screen", action: #selector(recordEntireScreen), keyEquivalent: "a")
-        entireRecordItem.keyEquivalentModifierMask = [.command, .shift]
-        entireRecordItem.target = self
-        recordMenu.addItem(entireRecordItem)
-        
-        let areaRecordItem = NSMenuItem(title: "Selected Area", action: #selector(recordSelectedArea), keyEquivalent: "r")
-        areaRecordItem.keyEquivalentModifierMask = [.command, .shift]
-        areaRecordItem.target = self
-        recordMenu.addItem(areaRecordItem)
-        
+        let entireItem = NSMenuItem(title: "Entire Screen (⌘⇧A)",
+                                    action: #selector(recordEntireScreen),
+                                    keyEquivalent: "")
+        entireItem.target = self
+        recordMenu.addItem(entireItem)
+
+        let areaItem = NSMenuItem(title: "Selected Area (⌘⇧R)",
+                                  action: #selector(recordSelectedArea),
+                                  keyEquivalent: "")
+        areaItem.target = self
+        recordMenu.addItem(areaItem)
+
         let recordItem = NSMenuItem(title: "Record...", action: nil, keyEquivalent: "")
         recordItem.submenu = recordMenu
         menu.addItem(recordItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        let quitItem = NSMenuItem(title: "Quit THISCREEN", action: #selector(quitApp), keyEquivalent: "q")
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit ThiScreen",
+                                  action: #selector(quitApp),
+                                  keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-        
+
         statusItem?.menu = menu
     }
-    
-    @objc private func openEditor() {
-        NSApp.activate(ignoringOtherApps: true)
-        
-        // Try to bring existing window to front, or trigger open
-        if let window = NSApp.windows.first(where: { !String(describing: type(of: $0)).contains("StatusBar") }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            NotificationCenter.default.post(name: NSNotification.Name("TriggerShowWindow"), object: nil)
-        }
-    }
-    
-    @objc private func captureArea() {
-        captureManager?.takeScreenshot()
-    }
-    
-    @objc private func recordEntireScreen() {
-        captureManager?.startRecording(mode: .entireScreen)
-    }
-    
-    @objc private func recordSelectedArea() {
-        captureManager?.startRecording(mode: .selectedArea)
-    }
-    
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
-    }
+
+    @objc private func openEditor()           { WindowManager.shared.show() }
+    @objc private func captureArea()          { captureManager?.takeScreenshot() }
+    @objc private func recordEntireScreen()   { captureManager?.startRecording(mode: .entireScreen) }
+    @objc private func recordSelectedArea()   { captureManager?.startRecording(mode: .selectedArea) }
+    @objc private func quitApp()              { NSApp.terminate(nil) }
 }
+
+// MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Start as a background accessory with no dock icon
+        // Background-only agent — no Dock icon, no app switcher entry
         NSApp.setActivationPolicy(.accessory)
-        
-        // Hide the app on cold launch (preserves window)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.hide(nil)
+        checkScreenRecordingPermission()
+
+        // Create the window (hidden) and status bar
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            let cm = CaptureManager.shared
+            WindowManager.shared.createWindow(captureManager: cm)
+            StatusBarManager.shared.setup(captureManager: cm)
         }
     }
-    
+
+    private func checkScreenRecordingPermission() {
+        let opts = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]]
+        if opts == nil || opts?.isEmpty == true {
+            CGRequestScreenCaptureAccess()
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Keep the app running in the background/menu bar even if the window is closed
-        return false
+        return false   // Keep running when window closes
     }
 }
+
+// MARK: - App Entry Point
 
 @main
 struct THISCREENApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var captureManager = CaptureManager.shared
-    
-    @Environment(\.openWindow) var openWindow
-    
-    private func setupOverlayWindow() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            for window in NSApp.windows where !String(describing: type(of: window)).contains("StatusBar") {
-                window.level = .floating
-                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .managed]
-                window.titlebarAppearsTransparent = true
-                window.titleVisibility = .hidden
-            }
-        }
-    }
-    
-    var body: some Scene {
-        WindowGroup(id: "main") {
-            ContentView()
-                .environmentObject(captureManager)
-                .onAppear { setupOverlayWindow() }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerShowWindow"))) { _ in
-                    openWindow(id: "main")
-                }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact)
-        .commands {
-            CommandGroup(replacing: .undoRedo) {
-                Button("Undo Drawing / Crop") {
-                    NotificationCenter.default.post(name: NSNotification.Name("TriggerUndo"), object: nil)
-                }
-                .keyboardShortcut("z", modifiers: [.command])
-            }
-            
-            CommandGroup(replacing: .pasteboard) {
-                Button("Copy Captured Image") {
-                    NotificationCenter.default.post(name: NSNotification.Name("TriggerCopy"), object: nil)
-                }
-                .keyboardShortcut("c", modifiers: [.command])
-                
-                Button("Save Captured Image") {
-                    NotificationCenter.default.post(name: NSNotification.Name("TriggerSave"), object: nil)
-                }
-                .keyboardShortcut("s", modifiers: [.command])
-            }
-        }
-        .onChange(of: captureManager.isRecording) { _, _ in
-            // Update menu when recording state changes
-            StatusBarManager.shared.setup(captureManager: captureManager)
-        }
-    }
-    
+
     init() {
         GlobalHotkeyManager.shared.setupHotkeys()
-        
-        // Setup status bar after a short delay to ensure captureManager is ready
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            StatusBarManager.shared.setup(captureManager: CaptureManager.shared)
-        }
+    }
+
+    // We don't use a SwiftUI Scene window at all — window is managed by WindowManager.
+    // An empty Settings scene keeps the @main struct valid.
+    var body: some Scene {
+        Settings { EmptyView() }
     }
 }

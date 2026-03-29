@@ -11,6 +11,32 @@ enum DrawingTool: String, CaseIterable {
     case pixelate = "square.grid.3x3.fill"
     case text = "textformat"
     case crop = "crop"
+
+    var displayName: String {
+        switch self {
+        case .select: return "Seleccionar"
+        case .pen: return "Lápiz"
+        case .arrow: return "Flecha"
+        case .rectangle: return "Rectángulo"
+        case .oval: return "Óvalo"
+        case .pixelate: return "Pixelar"
+        case .text: return "Texto"
+        case .crop: return "Recortar"
+        }
+    }
+
+    var shortcutKey: String {
+        switch self {
+        case .select: return "V"
+        case .pen: return "P"
+        case .arrow: return "A"
+        case .rectangle: return "R"
+        case .oval: return "O"
+        case .pixelate: return "X"
+        case .text: return "T"
+        case .crop: return "K"
+        }
+    }
 }
 
 struct DrawnElement: Identifiable, Equatable {
@@ -189,15 +215,91 @@ struct InteractiveDrawingView: View {
     }
 }
 
+// MARK: - Custom Tooltip
+
+struct ToolTooltip: View {
+    let name: String
+    let shortcut: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(name)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
+
+            Text(shortcut)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.6))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.white.opacity(0.15))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(.white.opacity(0.2), lineWidth: 0.5)
+                        )
+                )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.5))
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.white.opacity(0.12), lineWidth: 0.5)
+            }
+        )
+        .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+    }
+}
+
+// MARK: - Tool Button
+
 struct ToolButton: View {
-    let icon: String; let isSelected: Bool; let action: () -> Void
+    let tool: DrawingTool
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 18)).foregroundColor(isSelected ? .white : .primary).frame(width: 44, height: 44).background(ZStack {
-                if isSelected { Circle().fill(Color.accentColor).shadow(color: Color.accentColor.opacity(0.4), radius: 8, y: 4) }
-                else { Circle().fill(Color.white.opacity(0.05)) }
-            }).overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-        }.buttonStyle(.plain).animation(.spring(), value: isSelected)
+            Image(systemName: tool.rawValue)
+                .font(.system(size: 18))
+                .foregroundColor(isSelected ? .white : .primary)
+                .frame(width: 44, height: 44)
+                .background(ZStack {
+                    if isSelected {
+                        Circle().fill(Color.accentColor)
+                            .shadow(color: Color.accentColor.opacity(0.4), radius: 8, y: 4)
+                    } else {
+                        Circle().fill(isHovered ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
+                    }
+                })
+                .overlay(Circle().stroke(Color.white.opacity(isHovered ? 0.25 : 0.1), lineWidth: 0.5))
+                .scaleEffect(isHovered ? 1.08 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in isHovered = hovering }
+        .overlay(alignment: .bottom) {
+            if isHovered {
+                ToolTooltip(name: tool.displayName, shortcut: tool.shortcutKey)
+                    .offset(y: -56)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 4)),
+                        removal: .opacity
+                    ))
+                    .zIndex(999)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -246,12 +348,15 @@ struct ContentView: View {
                         Menu {
                             Button("Save to Desktop (Cmd+D)") { saveToSuggested(directory: .desktopDirectory) }
                             Button("Save to Downloads (Cmd+L)") { saveToSuggested(directory: .downloadsDirectory) }
+                            Button("Save to Documents") { saveVideoTo(directory: .documentDirectory) }
+                            Button("Save to Movies") { saveVideoTo(directory: .moviesDirectory) }
                             Divider()
-                            Button("Custom Location... (Cmd+S)") { saveVideo() }
+                            Button("Custom Location... (Cmd+S)") { saveVideoWithDialog() }
                         } label: {
                             Label("Save Video...", systemImage: "arrow.down.doc.fill").padding()
                         }.buttonStyle(.borderedProminent)
-                        
+                        .help("Choose where to save the recording")
+
                         Button(action: { captureManager.lastVideoUrl = nil }) {
                             Label("Discard", systemImage: "trash").foregroundColor(.red).padding()
                         }.buttonStyle(.bordered)
@@ -269,9 +374,10 @@ struct ContentView: View {
                     .gesture(MagnificationGesture()
                         .onChanged { value in
                             let newScale = baseZoomScale * value
-                            zoomScale = max(0.5, min(4.0, newScale))
+                            zoomScale = max(0.25, min(5.0, newScale))
                         }
                         .onEnded { _ in baseZoomScale = zoomScale })
+                    .mouseWheelZoom(zoomScale: $zoomScale, baseZoomScale: $baseZoomScale)
                 }
                 VStack {
                     Spacer()
@@ -285,7 +391,7 @@ struct ContentView: View {
                             }.padding(.top, 8).transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                         HStack {
-                            Image(systemName: "magnifyingglass"); Slider(value: $zoomScale, in: 0.5...4.0).frame(width: 80)
+                            Image(systemName: "magnifyingglass"); Slider(value: $zoomScale, in: 0.25...5.0).frame(width: 80)
                             Divider().frame(height: 16).padding(.horizontal, 4)
                             Image(systemName: "line.diagonal"); Slider(value: $currentLineWidth, in: 2...60).frame(width: 80)
                         }.padding(.top, captureManager.isRecording || currentTool == .crop ? 0 : 8)
@@ -303,7 +409,9 @@ struct ContentView: View {
                             
                             Divider().frame(height: 24).padding(.horizontal, 4)
                             
-                            ForEach(DrawingTool.allCases, id: \.self) { tool in ToolButton(icon: tool.rawValue, isSelected: currentTool == tool) { currentTool = tool } }
+                            ForEach(DrawingTool.allCases, id: \.self) { tool in
+                                ToolButton(tool: tool, isSelected: currentTool == tool) { currentTool = tool }
+                            }
                             Divider().frame(height: 24).padding(.horizontal, 2)
                             ColorPicker("", selection: $currentColor).labelsHidden()
                             Divider().frame(height: 24).padding(.horizontal, 2)
@@ -352,11 +460,16 @@ struct ContentView: View {
                                     Button(action: copyToClipboard) {
                                         Label("Copy to Clipboard (Cmd+C)", systemImage: "doc.on.clipboard")
                                     }
-                                    
+
                                     Divider()
-                                    
+
                                     Button("Save to Desktop (Cmd+D)") { saveToSuggested(directory: .desktopDirectory) }
                                     Button("Save to Downloads (Cmd+L)") { saveToSuggested(directory: .downloadsDirectory) }
+                                    Button("Save to Documents") { saveToSuggested(directory: .documentDirectory) }
+                                    Button("Save to Pictures") { saveToSuggested(directory: .picturesDirectory) }
+
+                                    Divider()
+
                                     Button("Custom Location... (Cmd+S)") { saveToFile() }
 
                                 } label: {
@@ -366,48 +479,55 @@ struct ContentView: View {
                                 }
                                 .menuStyle(.borderlessButton)
                                 .frame(width: 38)
+                                .help("Save or copy the captured image")
                             }
                         }.padding(.bottom, 8)
                     }.padding(.horizontal, 16).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 32)).shadow(radius: 20).padding(.bottom, 24)
                 }
             } else {
-                VStack(spacing: 20) {
-                    Image(systemName: "viewfinder.circle.fill")
-                        .font(.system(size: 80, weight: .ultraLight))
-                        .foregroundColor(.accentColor)
+                VStack(spacing: 16) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 64, weight: .ultraLight))
+                        .foregroundColor(.accentColor.opacity(0.8))
                         .symbolRenderingMode(.hierarchical)
                     
-                    Text("ThiScreen Ready")
-                        .font(.system(size: 32, weight: .bold))
+                    Text("Ready for Capture")
+                        .font(.system(size: 24, weight: .medium, design: .rounded))
+                        .foregroundColor(.primary.opacity(0.8))
                     
-                    Text("Capture anything. Annotate everything.")
+                    Text("Use your hotkeys or the menu bar icon.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Cmd+Shift+S: Capture Screenshot", systemImage: "camera")
-                        Label("Cmd+Shift+R: Record Video", systemImage: "video")
-                        Label("Cmd+Shift+A: Entire Screen", systemImage: "macwindow")
-                        Divider().padding(.vertical, 4)
-                        Label("Cmd+Z: Undo Drawing / Reset Crop", systemImage: "arrow.uturn.backward")
-                        Label("Cmd+D: Save to Desktop", systemImage: "desktopcomputer")
-                        Label("Cmd+L: Save to Downloads", systemImage: "arrow.down.circle")
-                    }
-                    .padding()
-                    .background(Color.white.opacity(0.05))
-                    .cornerRadius(12)
-                    
-                    Button("Start First Capture") {
-                        captureManager.takeScreenshot()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .padding(.top, 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.ultraThinMaterial)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
+        // MARK: Drawing tool keyboard shortcuts
+        .background(
+            Group {
+                // Tool selection shortcuts (active only when a screenshot is loaded)
+                Button("") { currentTool = .select }
+                    .keyboardShortcut("v", modifiers: [])
+                Button("") { currentTool = .pen }
+                    .keyboardShortcut("p", modifiers: [])
+                Button("") { currentTool = .arrow }
+                    .keyboardShortcut("a", modifiers: [])
+                Button("") { currentTool = .rectangle }
+                    .keyboardShortcut("r", modifiers: [])
+                Button("") { currentTool = .oval }
+                    .keyboardShortcut("o", modifiers: [])
+                Button("") { currentTool = .pixelate }
+                    .keyboardShortcut("x", modifiers: [])
+                Button("") { currentTool = .text }
+                    .keyboardShortcut("t", modifiers: [])
+                Button("") { currentTool = .crop }
+                    .keyboardShortcut("k", modifiers: [])
+                Button("") { WindowManager.shared.hide() }
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            .opacity(0)
+        )
         .onChange(of: captureManager.screenshot) {
             if ignoreChanges { return }
             
@@ -424,6 +544,13 @@ struct ContentView: View {
                 }
                 self.cropRect = nil
             }
+            // Show the editor window whenever a new screenshot arrives
+            if captureManager.screenshot != nil {
+                WindowManager.shared.show()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerShowWindow"))) { _ in
+            WindowManager.shared.show()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerUndo"))) { _ in
             withAnimation { undo() }
@@ -434,14 +561,36 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerSave"))) { _ in
             saveToFile()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerSaveToDesktop"))) { _ in
+            saveToSuggested(directory: .desktopDirectory)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerSaveToDownloads"))) { _ in
+            saveToSuggested(directory: .downloadsDirectory)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerAutoSaveVideo"))) { _ in
+            // Automatically show save dialog when video recording finishes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                saveVideoWithDialog()
+            }
+        }
     }
     
     func saveVideoTo(directory: FileManager.SearchPathDirectory) {
         guard let url = captureManager.lastVideoUrl else { return }
         let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
-        let dest = dir.appendingPathComponent("ThiScreen_Recording_\(Int(Date().timeIntervalSince1970)).mov")
-        try? FileManager.default.copyItem(at: url, to: dest)
-        NSWorkspace.shared.activateFileViewerSelecting([dest])
+
+        // Use formatted timestamp for better readability
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let dest = dir.appendingPathComponent("ThiScreen_Recording_\(timestamp).mov")
+
+        do {
+            try FileManager.default.copyItem(at: url, to: dest)
+            NSWorkspace.shared.activateFileViewerSelecting([dest])
+        } catch {
+            print("Error saving video to \(directory): \(error)")
+        }
     }
     
     func saveToSuggested(directory: FileManager.SearchPathDirectory) {
@@ -451,22 +600,53 @@ struct ContentView: View {
         }
         guard let finalImage = generateFinalImage() else { return }
         let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
-        let url = dir.appendingPathComponent("ThiScreen_\(Int(Date().timeIntervalSince1970)).png")
-        if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
-            try? pngData.write(to: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+
+        // Use formatted timestamp for better readability
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let url = dir.appendingPathComponent("ThiScreen_\(timestamp).png")
+
+        do {
+            if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
+                try pngData.write(to: url)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } catch {
+            print("Error saving image to \(directory): \(error)")
         }
     }
     
     func saveVideo() {
+        saveVideoWithDialog()
+    }
+
+    func saveVideoWithDialog() {
         guard let url = captureManager.lastVideoUrl else { return }
+
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.quickTimeMovie]
-        savePanel.nameFieldStringValue = "ThiScreen_Recording_\(Int(Date().timeIntervalSince1970)).mov"
+        savePanel.canCreateDirectories = true
+
+        // Set default filename with timestamp
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        savePanel.nameFieldStringValue = "ThiScreen_Recording_\(timestamp).mov"
+
+        // Set default directory to Movies
+        if let moviesURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first {
+            savePanel.directoryURL = moviesURL
+        }
+
         savePanel.begin { res in
             if res == .OK, let dest = savePanel.url {
-                try? FileManager.default.copyItem(at: url, to: dest)
-                NSWorkspace.shared.activateFileViewerSelecting([dest])
+                do {
+                    try FileManager.default.copyItem(at: url, to: dest)
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                } catch {
+                    print("Error saving video: \(error)")
+                }
             }
         }
     }
@@ -540,21 +720,35 @@ struct ContentView: View {
     @MainActor
     func saveToFile() {
         if captureManager.lastVideoUrl != nil {
-            saveVideo()
+            saveVideoWithDialog()
             return
         }
         guard let finalImage = generateFinalImage() else { return }
-        
+
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.png]
         savePanel.canCreateDirectories = true
-        savePanel.nameFieldStringValue = "ThiScreen_\(Int(Date().timeIntervalSince1970)).png"
-        
+
+        // Set default filename with formatted timestamp
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        savePanel.nameFieldStringValue = "ThiScreen_\(timestamp).png"
+
+        // Set default directory to Pictures
+        if let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first {
+            savePanel.directoryURL = picturesURL
+        }
+
         savePanel.begin { response in
             if response == .OK, let url = savePanel.url {
-                if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
-                    try? pngData.write(to: url)
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                do {
+                    if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
+                        try pngData.write(to: url)
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                } catch {
+                    print("Error saving image: \(error)")
                 }
             }
         }
@@ -565,3 +759,51 @@ struct ActionButton: View {
     let systemName: String; let action: () -> Void; var disabled: Bool = false
     var body: some View { Button(action: action) { Image(systemName: systemName).font(.system(size: 14)).foregroundColor(.primary.opacity(disabled ? 0.3 : 0.8)).frame(width: 32, height: 32).background(Circle().fill(.white.opacity(0.05))) }.buttonStyle(.plain).disabled(disabled) }
 }
+
+// MARK: - Mouse Wheel Zoom Support
+//
+// Uses a local NSEvent monitor to capture scroll wheel events for zooming.
+// This approach avoids all layout recursion issues since no custom NSView
+// with tracking areas is involved.
+
+struct MouseWheelZoomModifier: ViewModifier {
+    @Binding var zoomScale: CGFloat
+    @Binding var baseZoomScale: CGFloat
+    
+    @State private var monitor: Any? = nil
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                // Install a local event monitor for scroll wheel events
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+                    let delta = event.scrollingDeltaY
+                    guard delta != 0 else { return event }
+                    
+                    // Use a comfortable zoom speed factor
+                    let zoomFactor: CGFloat = 0.015
+                    let newZoom = zoomScale + (delta * zoomFactor)
+                    let clampedZoom = max(0.25, min(5.0, newZoom))
+                    
+                    zoomScale = clampedZoom
+                    baseZoomScale = clampedZoom
+                    
+                    // Return nil to consume the event (prevent scroll bounce)
+                    return nil
+                }
+            }
+            .onDisappear {
+                if let monitor = monitor {
+                    NSEvent.removeMonitor(monitor)
+                }
+                monitor = nil
+            }
+    }
+}
+
+extension View {
+    func mouseWheelZoom(zoomScale: Binding<CGFloat>, baseZoomScale: Binding<CGFloat>) -> some View {
+        self.modifier(MouseWheelZoomModifier(zoomScale: zoomScale, baseZoomScale: baseZoomScale))
+    }
+}
+
