@@ -51,7 +51,7 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.isMovable = true
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false // Fix: drawing shapes won't move window
         window.hidesOnDeactivate = false
     }
 
@@ -59,6 +59,53 @@ class WindowManager: NSObject, NSWindowDelegate {
     func show() {
         guard let window = windowController?.window else { return }
         configureOverlay(window)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        isVisible = true
+    }
+
+    /// Show the window resized to fit the captured image plus toolbar chrome.
+    func showFitting(image: NSImage) {
+        guard let window = windowController?.window,
+              let screen = NSScreen.main ?? NSScreen.screens.first else {
+            show()
+            return
+        }
+
+        let toolbarHeight: CGFloat = 110   // Reduced estimate for toolbar area
+        let horizontalPadding: CGFloat = 40
+        let verticalPadding: CGFloat = 40
+
+        let minWidth:  CGFloat = 600
+        let minHeight: CGFloat = 450
+
+        // Allow up to 85% of the screen visible frame
+        let maxW = screen.visibleFrame.width  * 0.85
+        let maxH = screen.visibleFrame.height * 0.85
+
+        let imgW = image.size.width
+        let imgH = image.size.height
+
+        // Calculate scale to fit image (and its future annotations) in screen
+        let scaleW = maxW / (imgW + horizontalPadding)
+        let scaleH = (maxH - toolbarHeight) / imgH
+        let scale = min(scaleW, scaleH, 1.0) 
+
+        var finalW = max(minWidth, (imgW * scale) + horizontalPadding)
+        var finalH = max(minHeight, (imgH * scale) + toolbarHeight + verticalPadding)
+        
+        // Ensure aspect ratio isn't too extreme for the window
+        if finalW > maxW { finalW = maxW }
+        if finalH > maxH { finalH = maxH }
+
+        let x = screen.visibleFrame.midX - finalW / 2
+        let y = screen.visibleFrame.midY - finalH / 2
+        let newFrame = NSRect(x: x, y: y, width: finalW, height: finalH)
+
+        configureOverlay(window)
+        window.setFrame(newFrame, display: true, animate: true)
+        
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()

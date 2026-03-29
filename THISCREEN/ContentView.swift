@@ -263,9 +263,9 @@ struct ToolButton: View {
     let tool: DrawingTool
     let isSelected: Bool
     let action: () -> Void
-
     @State private var isHovered = false
-
+    let onHoverChange: (Bool) -> Void
+    
     var body: some View {
         Button(action: action) {
             Image(systemName: tool.rawValue)
@@ -281,25 +281,15 @@ struct ToolButton: View {
                     }
                 })
                 .overlay(Circle().stroke(Color.white.opacity(isHovered ? 0.25 : 0.1), lineWidth: 0.5))
-                .scaleEffect(isHovered ? 1.08 : 1.0)
+                .scaleEffect(isHovered ? 1.05 : 1.0)
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .onHover { hovering in isHovered = hovering }
-        .overlay(alignment: .bottom) {
-            if isHovered {
-                ToolTooltip(name: tool.displayName, shortcut: tool.shortcutKey)
-                    .offset(y: -56)
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .offset(y: 4)),
-                        removal: .opacity
-                    ))
-                    .zIndex(999)
-                    .allowsHitTesting(false)
-            }
+        .animation(.easeOut(duration: 0.1), value: isHovered)
+        .onHover { hovering in 
+            isHovered = hovering 
+            onHoverChange(hovering)
         }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -327,6 +317,10 @@ struct ContentView: View {
     @State private var showClicks: Bool = true
     @State private var player: AVPlayer? = nil
     @State private var ignoreChanges: Bool = false
+    @State private var hoveredTool: DrawingTool? = nil
+    @State private var showRecordingTooltip: Bool = false
+    @State private var showSaveTooltip: Bool = false
+    @State private var showCaptureTooltip: Bool = false
     
     var body: some View {
         ZStack {
@@ -365,12 +359,17 @@ struct ContentView: View {
             }
             else if let img = captureManager.screenshot {
                 GeometryReader { geo in
-                    let scale = min(geo.size.width / img.size.width, geo.size.height / img.size.height) * zoomScale
+                    let scale = min(geo.size.width / (img.size.width + 40), geo.size.height / (img.size.height + 150)) * zoomScale
                     ZStack {
-                        Image(nsImage: img).resizable()
+                        Image(nsImage: img)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
                         InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage)
                     }
-                    .frame(width: img.size.width, height: img.size.height).scaleEffect(scale).frame(width: geo.size.width, height: geo.size.height)
+                    .frame(width: img.size.width, height: img.size.height)
+                    .scaleEffect(scale)
+                    .position(x: geo.size.width / 2, y: (geo.size.height - 100) / 2)
                     .gesture(MagnificationGesture()
                         .onChanged { value in
                             let newScale = baseZoomScale * value
@@ -405,12 +404,15 @@ struct ContentView: View {
                                     .background(Circle().fill(Color.white.opacity(0.1)))
                             }
                             .buttonStyle(.plain)
-                            .help("Start New Capture")
+                            .onHover { showCaptureTooltip = $0 }
                             
                             Divider().frame(height: 24).padding(.horizontal, 4)
                             
                             ForEach(DrawingTool.allCases, id: \.self) { tool in
-                                ToolButton(tool: tool, isSelected: currentTool == tool) { currentTool = tool }
+                                ToolButton(tool: tool, isSelected: currentTool == tool, action: { currentTool = tool }, onHoverChange: { isHovered in 
+                                    if isHovered { hoveredTool = tool }
+                                    else if hoveredTool == tool { hoveredTool = nil }
+                                })
                             }
                             Divider().frame(height: 24).padding(.horizontal, 2)
                             ColorPicker("", selection: $currentColor).labelsHidden()
@@ -453,7 +455,9 @@ struct ContentView: View {
                                             Circle().fill(.red).frame(width: 44, height: 44)
                                             RoundedRectangle(cornerRadius: 2).fill(.white).frame(width: 14, height: 14) 
                                         }.shadow(color: .red.opacity(0.4), radius: 10) 
-                                    }.buttonStyle(.plain)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .onHover { showRecordingTooltip = $0 }
                                 }
                                 
                                 Menu {
@@ -478,13 +482,63 @@ struct ContentView: View {
                                         .foregroundColor(.green)
                                 }
                                 .menuStyle(.borderlessButton)
+                                .onHover { showSaveTooltip = $0 }
                                 .frame(width: 38)
-                                .help("Save or copy the captured image")
                             }
                         }.padding(.bottom, 8)
-                    }.padding(.horizontal, 16).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 32)).shadow(radius: 20).padding(.bottom, 24)
+                        .overlay(alignment: .leading) {
+                            // Validated Drag handle for moving the window
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .opacity(0.4)
+                                .padding(.leading, -16)
+                                .contentShape(Rectangle())
+                                .onDrag { NSItemProvider(object: "drag" as NSString) } // Placeholder for visual, but we use mouseDown
+                                .onTapGesture { } // Consume to avoid pass-through
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { _ in
+                                            if let window = NSApp.keyWindow {
+                                                window.performDrag(with: NSApp.currentEvent!)
+                                            }
+                                        }
+                                )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 32))
+                    .shadow(radius: 20)
+                    .padding(.bottom, 24)
                 }
-            } else {
+            // GLOBAL TOOLTIPS (Above everything else)
+            VStack {
+                Spacer()
+                ZStack {
+                    if let tool = hoveredTool {
+                        ToolTooltip(name: tool.displayName, shortcut: tool.shortcutKey)
+                            .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 4)), removal: .opacity))
+                    }
+                    if showCaptureTooltip {
+                        ToolTooltip(name: "Nueva Captura", shortcut: "⌘⇧S")
+                            .transition(.opacity)
+                    }
+                    if showRecordingTooltip {
+                        ToolTooltip(name: "Detener Grabación", shortcut: "⌘⇧T")
+                            .transition(.opacity)
+                    }
+                    if showSaveTooltip {
+                        ToolTooltip(name: "Finalizar y Guardar", shortcut: "Menu")
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.bottom, 110) // Positioned above the toolbar
+            }
+            .allowsHitTesting(false)
+            .zIndex(2000)
+            
+            } else { // Close of if-let img
                 VStack(spacing: 16) {
                     Image(systemName: "camera.viewfinder")
                         .font(.system(size: 64, weight: .ultraLight))
@@ -544,9 +598,9 @@ struct ContentView: View {
                 }
                 self.cropRect = nil
             }
-            // Show the editor window whenever a new screenshot arrives
-            if captureManager.screenshot != nil {
-                WindowManager.shared.show()
+            // Show the editor window sized to fit the captured screenshot
+            if let img = captureManager.screenshot {
+                WindowManager.shared.showFitting(image: img)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TriggerShowWindow"))) { _ in
