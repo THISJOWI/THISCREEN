@@ -68,6 +68,7 @@ struct InteractiveDrawingView: View {
     @Binding var currentLineWidth: CGFloat
     @Binding var cropRect: CGRect?
     var pixelatedNSImage: NSImage? = nil
+    var onApplyCrop: (() -> Void)? = nil
     
     @State private var currentElement: DrawnElement?
     @State private var selectedElementID: UUID?
@@ -165,6 +166,9 @@ struct InteractiveDrawingView: View {
                 Button("") { deleteSelectedElement() }.keyboardShortcut(.init("\u{7F}"), modifiers: []) 
                 if textInputLocation != nil || currentTool == .text {
                     Button("") { cancelTextEditing() }.keyboardShortcut(.escape, modifiers: [])
+                }
+                if currentTool == .crop && cropRect != nil {
+                    Button("") { onApplyCrop?() }.keyboardShortcut(.return, modifiers: [])
                 }
             }
             .opacity(0)
@@ -473,7 +477,7 @@ struct ContentView: View {
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
-                        InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage)
+                        InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage, onApplyCrop: applyCrop)
                     }
                     .frame(width: img.size.width, height: img.size.height)
                     .scaleEffect(scale)
