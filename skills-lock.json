@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "boost-prompt": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "2621a44fbd9fc2636953d1e6e39e5faeed995f7fb958ec12cc98a2f0576f6fa7"
+    },
+    "swiftui-expert-skill": {
+      "source": "avdlee/swiftui-agent-skill",
+      "sourceType": "github",
+      "computedHash": "6ee49ef533bac7e930efb2e2e5ae61399de9ffb52645df311740cbe6b4108134"
+    }
+  }
+}
