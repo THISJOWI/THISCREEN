@@ -3,40 +3,43 @@ import UniformTypeIdentifiers
 import AVKit
 
 enum DrawingTool: String, CaseIterable {
-    case select = "cursorarrow"
-    case pen = "scribble"
-    case arrow = "arrow.up.right"
-    case rectangle = "square"
-    case oval = "circle"
-    case pixelate = "square.grid.3x3.fill"
-    case text = "textformat"
-    case crop = "crop"
+  case select = "cursorarrow"
+  case pen = "scribble"
+  case line = "line.diagonal"
+  case arrow = "arrow.up.right"
+  case rectangle = "square"
+  case oval = "circle"
+  case pixelate = "square.grid.3x3.fill"
+  case text = "textformat"
+  case crop = "crop"
 
-    var displayName: String {
-        switch self {
-        case .select: return "Seleccionar"
-        case .pen: return "Lápiz"
-        case .arrow: return "Flecha"
-        case .rectangle: return "Rectángulo"
-        case .oval: return "Óvalo"
-        case .pixelate: return "Pixelar"
-        case .text: return "Texto"
-        case .crop: return "Recortar"
-        }
+  var displayName: String {
+    switch self {
+    case .select: return "Seleccionar"
+    case .pen: return "Lápiz"
+    case .line: return "Línea"
+    case .arrow: return "Flecha"
+    case .rectangle: return "Rectángulo"
+    case .oval: return "Óvalo"
+    case .pixelate: return "Pixelar"
+    case .text: return "Texto"
+    case .crop: return "Recortar"
     }
+  }
 
-    var shortcutKey: String {
-        switch self {
-        case .select: return "V"
-        case .pen: return "P"
-        case .arrow: return "A"
-        case .rectangle: return "R"
-        case .oval: return "O"
-        case .pixelate: return "X"
-        case .text: return "T"
-        case .crop: return "K"
-        }
+  var shortcutKey: String {
+    switch self {
+    case .select: return "V"
+    case .pen: return "P"
+    case .line: return "L"
+    case .arrow: return "A"
+    case .rectangle: return "R"
+    case .oval: return "O"
+    case .pixelate: return "X"
+    case .text: return "T"
+    case .crop: return "K"
     }
+  }
 }
 
 struct DrawnElement: Identifiable, Equatable {
@@ -97,44 +100,68 @@ struct InteractiveDrawingView: View {
                      context.stroke(Path(crop), with: .color(.white), lineWidth: 1.5)
                  }
             }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if currentTool == .text { return }
-                        if currentTool == .select {
-                            if dragStartPoint == nil { findElementAt(value.startLocation) }
-                            if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
-                                let translation = CGSize(width: value.translation.width - (dragStartPoint?.x ?? 0), height: value.translation.height - (dragStartPoint?.y ?? 0))
-                                elements[index].translate(by: translation)
-                                dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
-                            }
-                            return
-                        }
-                        if currentTool == .crop {
-                            let start = value.startLocation
-                            let end = value.location
-                            cropRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
-                            return
-                        }
-                        if currentElement == nil {
-                            currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [value.location], startPoint: value.location, endPoint: value.location)
-                        } else {
-                            if currentTool == .pen || currentTool == .pixelate { currentElement?.points.append(value.location) }
-                            else { currentElement?.endPoint = value.location }
-                        }
-                    }
-                    .onEnded { value in
-                        if currentTool == .select { dragStartPoint = nil; return }
-                        if currentTool == .text { 
-                            textInputLocation = value.location
-                            textInputBuffer = ""
-                            return 
-                        }
-                        if currentTool == .crop { return }
-                        if let newElement = currentElement { withAnimation { elements.append(newElement) } }
-                        currentElement = nil
-                    }
-            )
+      // GESTO PARA SELECT (mover elementos) - solo activo cuando currentTool == .select
+      .highPriorityGesture(
+        currentTool == .select ?
+          DragGesture(minimumDistance: 0)
+            .onChanged { value in
+              if dragStartPoint == nil { findElementAt(value.startLocation) }
+              if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
+                let translation = CGSize(width: value.translation.width - (dragStartPoint?.x ?? 0), height: value.translation.height - (dragStartPoint?.y ?? 0))
+                elements[index].translate(by: translation)
+                dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
+              }
+            }
+            .onEnded { _ in
+              dragStartPoint = nil
+            }
+          : nil
+      )
+      // GESTO PARA DIBUJAR - solo activo cuando currentTool es de dibujo (no select, no text)
+      .highPriorityGesture(
+        (currentTool != .select && currentTool != .text) ?
+          DragGesture(minimumDistance: 0)
+            .onChanged { value in
+              switch currentTool {
+              case .crop:
+                let start = value.startLocation
+                let end = value.location
+                cropRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
+              case .pen, .pixelate:
+                if currentElement == nil {
+                  currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [value.location], startPoint: value.location, endPoint: value.location)
+                } else {
+                  currentElement?.points.append(value.location)
+                }
+              case .line, .arrow, .rectangle, .oval:
+                if currentElement == nil {
+                  currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [], startPoint: value.startLocation, endPoint: value.location)
+                } else {
+                  currentElement?.endPoint = value.location
+                }
+              default:
+                break
+              }
+            }
+            .onEnded { _ in
+              if currentTool == .crop { return }
+              if let newElement = currentElement {
+                withAnimation { elements.append(newElement) }
+                currentElement = nil
+              }
+            }
+          : nil
+      )
+      // GESTO PARA TEXT - solo activo cuando currentTool == .text
+      .highPriorityGesture(
+        currentTool == .text ?
+          DragGesture(minimumDistance: 0)
+            .onEnded { value in
+              textInputLocation = value.location
+              textInputBuffer = ""
+            }
+          : nil
+      )
             
             if let location = textInputLocation {
                 TextField("...", text: $textInputBuffer, onCommit: {
@@ -207,9 +234,12 @@ struct InteractiveDrawingView: View {
         case .pen, .pixelate:
             guard let first = element.points.first else { return }
             path.move(to: first); for p in element.points.dropFirst() { path.addLine(to: p) }
-        case .rectangle: path.addRect(rect)
-        case .oval: path.addEllipse(in: rect)
-        case .arrow:
+  case .rectangle: path.addRect(rect)
+    case .oval: path.addEllipse(in: rect)
+    case .line:
+      path.move(to: start)
+      path.addLine(to: end)
+    case .arrow:
             path.move(to: start); path.addLine(to: end)
             let angle = atan2(end.y - start.y, end.x - start.x); let len: CGFloat = 20 + element.lineWidth * 2
             let p1 = CGPoint(x: end.x - len * cos(angle - .pi/6), y: end.y - len * sin(angle - .pi/6))
@@ -329,23 +359,23 @@ struct GlassIconButton: View {
             isHovered = hovering
             onHoverChanged?(hovering)
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    isDragging = true
-                    let limit: CGFloat = 6
-                    dragOffset = CGSize(
-                        width: min(max(value.translation.width, -limit), limit),
-                        height: min(max(value.translation.height, -limit), limit)
-                    )
-                }
-                .onEnded { _ in
-                    isDragging = false
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                        dragOffset = .zero
-                    }
-                }
-        )
+    .simultaneousGesture(
+      DragGesture(minimumDistance: 3)
+        .onChanged { value in
+          isDragging = true
+          let limit: CGFloat = 6
+          dragOffset = CGSize(
+            width: min(max(value.translation.width, -limit), limit),
+            height: min(max(value.translation.height, -limit), limit)
+          )
+        }
+        .onEnded { _ in
+          isDragging = false
+          withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+            dragOffset = .zero
+          }
+        }
+    )
     }
 }
 
@@ -494,21 +524,29 @@ struct ContentView: View {
                         }
                         .onEnded { _ in baseZoomScale = zoomScale }
                 )
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 5)
-                        .onChanged { value in
-                            // Only allow panning when zoomed in
-                            if zoomScale > 1.0 {
-                                panOffset = CGSize(
-                                    width: panStartOffset.width + value.translation.width,
-                                    height: panStartOffset.height + value.translation.height
-                                )
-                            }
-                        }
-                        .onEnded { value in
-                            panStartOffset = panOffset
-                        }
-                )
+      .simultaneousGesture(
+        DragGesture(minimumDistance: 5)
+          .onChanged { value in
+            // Only allow panning when zoomed in and not using drawing tools
+            if zoomScale > 1.0 && currentTool == .select {
+              panOffset = CGSize(
+                width: panStartOffset.width + value.translation.width,
+                height: panStartOffset.height + value.translation.height
+              )
+            }
+          }
+          .onEnded { value in
+            panStartOffset = panOffset
+          }
+      )
+      .mouseWheelZoom(zoomScale: $zoomScale, baseZoomScale: $baseZoomScale)
+      // Use highPriorityGesture to ensure Canvas gestures take precedence
+      .highPriorityGesture(
+        TapGesture()
+          .onEnded { _ in
+            // This empty gesture ensures Canvas receives events first
+          }
+      )
 
             }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -732,10 +770,12 @@ struct ContentView: View {
                 // Tool selection shortcuts (active only when a screenshot is loaded)
                 Button("") { currentTool = .select }
                     .keyboardShortcut("v", modifiers: [])
-                Button("") { currentTool = .pen }
-                    .keyboardShortcut("p", modifiers: [])
-                Button("") { currentTool = .arrow }
-                    .keyboardShortcut("a", modifiers: [])
+      Button("") { currentTool = .pen }
+        .keyboardShortcut("p", modifiers: [])
+      Button("") { currentTool = .line }
+        .keyboardShortcut("l", modifiers: [])
+      Button("") { currentTool = .arrow }
+        .keyboardShortcut("a", modifiers: [])
                 Button("") { currentTool = .rectangle }
                     .keyboardShortcut("r", modifiers: [])
                 Button("") { currentTool = .oval }
@@ -763,20 +803,22 @@ struct ContentView: View {
             }
             .opacity(0)
         )
-        .onChange(of: captureManager.screenshot) {
-            if ignoreChanges { return }
-            
-            withAnimation {
-                self.elements.removeAll()
-                self.redoStack.removeAll()
-                self.historyStack.removeAll()
-                self.zoomScale = 1.0
-                self.pixelatedImage = nil
-                if captureManager.screenshot != nil {
-                    self.captureManager.lastVideoUrl = nil
-                }
-                self.cropRect = nil
-            }
+    .onChange(of: captureManager.screenshot) {
+      if ignoreChanges { return }
+
+      withAnimation {
+        self.elements.removeAll()
+        self.redoStack.removeAll()
+        self.historyStack.removeAll()
+        self.zoomScale = 1.0
+        self.pixelatedImage = nil
+        if captureManager.screenshot != nil {
+          self.captureManager.lastVideoUrl = nil
+          // Auto-select the select tool when a new screenshot is captured
+          self.currentTool = .select
+        }
+        self.cropRect = nil
+      }
             // Keep window sizing stable. Aggressive re-fitting here can trigger
             // AppKit/SwiftUI layout recursion on some macOS versions.
         }
@@ -878,22 +920,29 @@ struct ContentView: View {
         }
     }
     
-    func saveToSuggested(directory: FileManager.SearchPathDirectory) {
-        if captureManager.lastVideoUrl != nil {
-            saveVideoTo(directory: directory)
-            return
-        }
-        guard let finalImage = generateFinalImage() else {
-            showSaveFeedback("No hay captura o grabacion para guardar.")
-            return
-        }
-        let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
+func saveToSuggested(directory: FileManager.SearchPathDirectory) {
+    if captureManager.lastVideoUrl != nil {
+      saveVideoTo(directory: directory)
+      return
+    }
+    guard let finalImage = generateFinalImage() else {
+      showSaveFeedback("No hay captura o grabacion para guardar.")
+      return
+    }
+    
+    // For Pictures directory, use save dialog to handle sandbox restrictions
+    if directory == .picturesDirectory {
+      saveImageWithDialog(defaultDirectory: nil, image: finalImage)
+      return
+    }
+    
+    let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
 
-        // Use formatted timestamp for better readability
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let timestamp = formatter.string(from: Date())
-        let url = dir.appendingPathComponent("THISCREEN_\(timestamp).png")
+    // Use formatted timestamp for better readability
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+    let timestamp = formatter.string(from: Date())
+    let url = dir.appendingPathComponent("THISCREEN_\(timestamp).png")
 
         do {
             if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {

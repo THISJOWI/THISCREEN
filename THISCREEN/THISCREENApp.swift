@@ -53,15 +53,18 @@ class WindowManager: NSObject, NSWindowDelegate {
         // Start hidden — no "Ready for Capture" screen at launch
     }
 
-    // MARK: Overlay configuration
-    func configureOverlay(_ window: NSWindow) {
-        // Above .floating and .statusBar — appears over full‑screen apps
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        window.isMovable = true
-        window.isMovableByWindowBackground = false // Fix: drawing shapes won't move window
-        window.hidesOnDeactivate = false
-    }
+  // MARK: Overlay configuration
+  func configureOverlay(_ window: NSWindow) {
+    // Above .floating and .statusBar — appears over full‑screen apps
+    window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+    // canJoinAllSpaces: visible in all spaces (Mission Control)
+    // fullScreenAuxiliary: can appear over full-screen apps
+    // stationary: window stays in its space when user switches spaces
+    window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .transient]
+    window.isMovable = true
+    window.isMovableByWindowBackground = false // Fix: drawing shapes won't move window
+    window.hidesOnDeactivate = false
+  }
 
     // MARK: Show / Hide
     func show() {

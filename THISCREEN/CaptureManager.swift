@@ -51,9 +51,13 @@ class CaptureManager: ObservableObject {
         let tempUrl = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("thiscreen_capture.png")
         try? FileManager.default.removeItem(at: tempUrl)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-i", "-r", "-t", "png", tempUrl.path]
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    // -i: interactive mode (area selection)
+    // -r: don't add screen dpi metadata
+    // -t: format
+    // -C: capture the cursor
+    process.arguments = ["-i", "-r", "-C", "-t", "png", tempUrl.path]
 
         // Hide app before capture (preserves window) - wait for hide to complete
         DispatchQueue.main.async {
