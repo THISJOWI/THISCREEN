@@ -8,16 +8,20 @@ class GlobalHotkeyManager {
     private var handlerInstalled = false
     
     func setupHotkeys() {
+        print("[GlobalHotkeyManager] Setting up hotkeys")
+
         let cmdShift = UInt32(cmdKey | shiftKey)
-        
+
         // Ensure the handler is installed once for all hotkeys
         installHandler()
-        
+
         // S = 1, R = 15, X = 7, A = 0
         register(keyCode: 1, modifiers: cmdShift, id: 1, notification: "TriggerCapture")
         register(keyCode: 15, modifiers: cmdShift, id: 2, notification: "TriggerRecord")
         register(keyCode: 7, modifiers: cmdShift, id: 3, notification: "TriggerStopRecord")
         register(keyCode: 0, modifiers: cmdShift, id: 4, notification: "TriggerEntireRecord")
+
+        print("[GlobalHotkeyManager] Hotkeys setup complete")
     }
     
     private func installHandler() {

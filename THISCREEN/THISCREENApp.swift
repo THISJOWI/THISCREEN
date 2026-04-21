@@ -13,13 +13,18 @@ import AppKit
 class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
 
-    private var windowController: NSWindowController?
+    private(set) var windowController: NSWindowController?
     private(set) var isVisible = false
     private var isApplyingFrameUpdate = false
 
     // Call once at startup to create the window (hidden)
     func createWindow(captureManager: CaptureManager) {
-        guard windowController == nil else { return }
+        guard windowController == nil else {
+            print("[WindowManager] Window already created, skipping")
+            return
+        }
+
+        print("[WindowManager] Creating window")
 
         let rootView = ContentView()
             .environmentObject(captureManager)
@@ -34,18 +39,17 @@ class WindowManager: NSObject, NSWindowDelegate {
             defer: false
         )
         window.contentViewController = hosting
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
         window.title = "THISCREEN"
         window.minSize = NSSize(width: 640, height: 480)
         window.contentMinSize = NSSize(width: 640, height: 480)
-        window.isReleasedWhenClosed = false   // ← KEY: window lives forever
+        window.isReleasedWhenClosed = false // ← KEY: window lives forever
         window.delegate = self
         window.center()
 
         configureOverlay(window)
 
         windowController = NSWindowController(window: window)
+        print("[WindowManager] Window created successfully")
         // Start hidden — no "Ready for Capture" screen at launch
     }
 
@@ -61,45 +65,111 @@ class WindowManager: NSObject, NSWindowDelegate {
 
     // MARK: Show / Hide
     func show() {
-        guard let window = windowController?.window else { return }
+        print("[WindowManager] show() called")
+
+        // Ensure window controller and window exist
+        guard let windowController = windowController else {
+            print("[WindowManager] ERROR: windowController is nil")
+            return
+        }
+
+        guard let window = windowController.window else {
+            print("[WindowManager] ERROR: window is nil")
+            return
+        }
+
+        print("[WindowManager] Window exists, configuring overlay")
         configureOverlay(window)
-        
+
+        // Get the screen where the mouse cursor is (current screen)
+        let currentScreen = getCurrentScreen()
+
         let hasActiveContent = (CaptureManager.shared.screenshot != nil) || (CaptureManager.shared.lastVideoUrl != nil)
         let isTooSmall = window.frame.width < 760 || window.frame.height < 520
-        
+
         // If the editor has no active capture/video, always restore a comfortable default size.
         // Also recover from any collapsed/tiny window state.
         if !hasActiveContent || isTooSmall {
+            print("[WindowManager] Restoring default window size")
             window.setContentSize(NSSize(width: 900, height: 620))
-            window.center()
+
+            // Center on current screen instead of main screen
+            if let screen = currentScreen {
+                let screenFrame = screen.visibleFrame
+                let windowFrame = window.frame
+                let x = screenFrame.midX - windowFrame.width / 2
+                let y = screenFrame.midY - windowFrame.height / 2
+                window.setFrameOrigin(NSPoint(x: x, y: y))
+            } else {
+                window.center()
+            }
         }
-        
+
+        // Ensure app is activated before showing window
+        print("[WindowManager] Activating app and showing window")
         NSApp.activate(ignoringOtherApps: true)
+
+        // Make window key and bring to front
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+
+        // Force window level to ensure it appears above other windows
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+
         isVisible = true
+        print("[WindowManager] Window is now visible on current screen")
+    }
+
+    /// Get the screen where the mouse cursor currently is
+    private func getCurrentScreen() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        for screen in NSScreen.screens {
+            if screen.frame.contains(mouseLocation) {
+                return screen
+            }
+        }
+        return NSScreen.main ?? NSScreen.screens.first
     }
 
     /// Show the window resized to fit the captured image plus toolbar chrome.
     func showFitting(image: NSImage) {
-        guard let window = windowController?.window,
-              let screen = NSScreen.main ?? NSScreen.screens.first else {
+        print("[WindowManager] showFitting() called")
+
+        guard let windowController = windowController else {
+            print("[WindowManager] ERROR: windowController is nil in showFitting")
             show()
             return
         }
-        
-        if isApplyingFrameUpdate { return }
 
-        let toolbarHeight: CGFloat = 110   // Reduced estimate for toolbar area
+        guard let window = windowController.window else {
+            print("[WindowManager] ERROR: window is nil in showFitting")
+            show()
+            return
+        }
+
+        // Use current screen (where mouse is) instead of main screen
+        let screen = getCurrentScreen()
+        guard let targetScreen = screen else {
+            print("[WindowManager] ERROR: No screen available in showFitting")
+            show()
+            return
+        }
+
+        if isApplyingFrameUpdate {
+            print("[WindowManager] Frame update already in progress, skipping")
+            return
+        }
+
+        let toolbarHeight: CGFloat = 110 // Reduced estimate for toolbar area
         let horizontalPadding: CGFloat = 40
         let verticalPadding: CGFloat = 40
 
-        let minWidth:  CGFloat = 600
+        let minWidth: CGFloat = 600
         let minHeight: CGFloat = 450
 
         // Allow up to 85% of the screen visible frame
-        let maxW = screen.visibleFrame.width  * 0.85
-        let maxH = screen.visibleFrame.height * 0.85
+        let maxW = targetScreen.visibleFrame.width * 0.85
+        let maxH = targetScreen.visibleFrame.height * 0.85
 
         let imgW = image.size.width
         let imgH = image.size.height
@@ -107,30 +177,36 @@ class WindowManager: NSObject, NSWindowDelegate {
         // Calculate scale to fit image (and its future annotations) in screen
         let scaleW = maxW / (imgW + horizontalPadding)
         let scaleH = (maxH - toolbarHeight) / imgH
-        let scale = min(scaleW, scaleH, 1.0) 
+        let scale = min(scaleW, scaleH, 1.0)
 
         var finalW = max(minWidth, (imgW * scale) + horizontalPadding)
         var finalH = max(minHeight, (imgH * scale) + toolbarHeight + verticalPadding)
-        
+
         // Ensure aspect ratio isn't too extreme for the window
         if finalW > maxW { finalW = maxW }
         if finalH > maxH { finalH = maxH }
 
-        let x = screen.visibleFrame.midX - finalW / 2
-        let y = screen.visibleFrame.midY - finalH / 2
+        let x = targetScreen.visibleFrame.midX - finalW / 2
+        let y = targetScreen.visibleFrame.midY - finalH / 2
         let newFrame = NSRect(x: x, y: y, width: finalW, height: finalH)
 
+        print("[WindowManager] Resizing window to fit image: \(newFrame)")
         configureOverlay(window)
         isApplyingFrameUpdate = true
         window.setFrame(newFrame, display: true, animate: false)
         DispatchQueue.main.async { [weak self] in
             self?.isApplyingFrameUpdate = false
         }
-        
+
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+
+        // Force window level to ensure it appears above other windows
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+
         isVisible = true
+        print("[WindowManager] Window is now visible with fitted size on current screen")
     }
 
     func hide() {

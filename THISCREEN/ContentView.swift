@@ -420,7 +420,9 @@ struct ContentView: View {
     @State private var currentLineWidth: CGFloat = 8.0
     @State private var zoomScale: CGFloat = 1.0
     @State private var baseZoomScale: CGFloat = 1.0
-    @State private var pixelatedImage: NSImage? = nil 
+    @State private var panOffset: CGSize = .zero
+    @State private var panStartOffset: CGSize = .zero
+    @State private var pixelatedImage: NSImage? = nil
     @State private var cropRect: CGRect? = nil
     
     // UI Local States
@@ -433,11 +435,11 @@ struct ContentView: View {
     @State private var showSaveTooltip: Bool = false
     @State private var showCaptureTooltip: Bool = false
     @State private var localKeyMonitor: Any? = nil
-    @State private var isSaving = false
     
     var body: some View {
         ZStack {
             Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+                .padding(.top, 28)
             
             if let url = captureManager.lastVideoUrl {
                 VStack {
@@ -470,27 +472,45 @@ struct ContentView: View {
                     }.padding(.bottom, 24)
                 }
             }
-            else if let img = captureManager.screenshot {
-                GeometryReader { geo in
-                    let scale = min(geo.size.width / (img.size.width + 40), geo.size.height / (img.size.height + 150)) * zoomScale
-                    ZStack {
-                        Image(nsImage: img)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                        InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage, onApplyCrop: applyCrop)
-                    }
-                    .frame(width: img.size.width, height: img.size.height)
-                    .scaleEffect(scale)
-                    .position(x: geo.size.width / 2, y: (geo.size.height - 100) / 2)
-                    .gesture(MagnificationGesture()
+        else if let img = captureManager.screenshot {
+            GeometryReader { geo in
+                let scale = min(geo.size.width / (img.size.width + 40), geo.size.height / (img.size.height + 150)) * zoomScale
+                ZStack {
+                    Image(nsImage: img)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                    InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage, onApplyCrop: applyCrop)
+                }
+                .frame(width: img.size.width, height: img.size.height)
+                .scaleEffect(scale)
+                .offset(panOffset)
+                .position(x: geo.size.width / 2, y: (geo.size.height - 100) / 2)
+                .gesture(
+                    MagnificationGesture()
                         .onChanged { value in
                             let newScale = baseZoomScale * value
                             zoomScale = max(0.25, min(5.0, newScale))
                         }
-                        .onEnded { _ in baseZoomScale = zoomScale })
-                    
-                }
+                        .onEnded { _ in baseZoomScale = zoomScale }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 5)
+                        .onChanged { value in
+                            // Only allow panning when zoomed in
+                            if zoomScale > 1.0 {
+                                panOffset = CGSize(
+                                    width: panStartOffset.width + value.translation.width,
+                                    height: panStartOffset.height + value.translation.height
+                                )
+                            }
+                        }
+                        .onEnded { value in
+                            panStartOffset = panOffset
+                        }
+                )
+
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack {
                     Spacer()
@@ -503,11 +523,32 @@ struct ContentView: View {
                                 Text(captureManager.isRecording ? "🔴 RECORDING..." : "Drag to select area and apply").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundColor(captureManager.isRecording ? .red : .secondary)
                             }.padding(.top, 8).transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-                        HStack {
-                            Image(systemName: "magnifyingglass"); Slider(value: $zoomScale, in: 0.25...5.0).frame(width: 80)
-                            Divider().frame(height: 16).padding(.horizontal, 4)
-                            Image(systemName: "line.diagonal"); Slider(value: $currentLineWidth, in: 2...60).frame(width: 80)
-                        }.padding(.top, captureManager.isRecording || currentTool == .crop ? 0 : 8)
+            HStack {
+                Image(systemName: "magnifyingglass")
+                Slider(value: $zoomScale, in: 0.25...5.0).frame(width: 80)
+                Text("\(Int(zoomScale * 100))%")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 35)
+                // Reset pan button (only visible when zoomed or panned)
+                if zoomScale != 1.0 || panOffset != .zero {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            zoomScale = 1.0
+                            baseZoomScale = 1.0
+                            panOffset = .zero
+                        }
+                    }) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.accentColor)
+                    .help("Reset zoom and position")
+                }
+                Divider().frame(height: 16).padding(.horizontal, 4)
+                Image(systemName: "line.diagonal"); Slider(value: $currentLineWidth, in: 2...60).frame(width: 80)
+            }.padding(.top, captureManager.isRecording || currentTool == .crop ? 0 : 8)
                         
                         HStack(spacing: 8) {
                             GlassIconButton(
@@ -866,43 +907,33 @@ struct ContentView: View {
         }
     }
     
-    func saveVideo() {
-        guard !isSaving else { return }
-        isSaving = true
-        saveVideoWithDialog()
-    }
+func saveVideo() {
+    saveVideoWithDialog()
+}
 
-    func saveVideoWithDialog() {
-        guard !isSaving else { return }
-        isSaving = true
-        saveVideoWithDialog(defaultDirectory: FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first)
-    }
+func saveVideoWithDialog() {
+    saveVideoWithDialog(defaultDirectory: FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first)
+}
 
-    private func saveVideoWithDialog(defaultDirectory: URL?) {
-        guard let url = captureManager.lastVideoUrl else { 
-            isSaving = false
-            return 
-        }
+private func saveVideoWithDialog(defaultDirectory: URL?) {
+    guard let url = captureManager.lastVideoUrl else { return }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let timestamp = formatter.string(from: Date())
-        let filename = "THISCREEN_Recording_\(timestamp).mov"
-        
-        presentSavePanel(allowedTypes: [.quickTimeMovie], defaultDir: defaultDirectory, defaultName: filename) { dest in
-            defer { self.isSaving = false }
-            guard let dest = dest else { return }
-            
-            do {
-                try FileManager.default.copyItem(at: url, to: dest)
-                NSWorkspace.shared.activateFileViewerSelecting([dest])
-                self.showSaveFeedback("Guardado en \(dest.path)")
-            } catch {
-                print("Error saving video: \(error)")
-                self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
-            }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+    let timestamp = formatter.string(from: Date())
+    let filename = "THISCREEN_Recording_\(timestamp).mov"
+
+    presentSavePanel(allowedTypes: [.quickTimeMovie], defaultDir: defaultDirectory, defaultName: filename) { dest in
+        guard let dest = dest else { return }
+
+        do {
+            try FileManager.default.copyItem(at: url, to: dest)
+            NSWorkspace.shared.activateFileViewerSelecting([dest])
+        } catch {
+            print("Error saving video: \(error)")
         }
     }
+}
     
     func createPixelatedNSImage(from image: NSImage) -> NSImage? {
         guard let tiff = image.tiffRepresentation, let ciImg = CIImage(data: tiff) else { return nil }
@@ -1010,74 +1041,74 @@ struct ContentView: View {
         NSPasteboard.general.writeObjects([finalImage])
     }
 
-    @MainActor
-    func saveToFile() {
-        guard !isSaving else { return }
-        isSaving = true
-        
-        if captureManager.lastVideoUrl != nil {
-            saveVideoWithDialog()
-            return
-        }
-        guard let finalImage = generateFinalImage() else {
-            showSaveFeedback("No hay captura o grabacion para guardar.")
-            isSaving = false
-            return
-        }
-        
-        DispatchQueue.main.async {
-            self.saveImageWithDialog(defaultDirectory: FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first, image: finalImage)
-        }
+@MainActor
+func saveToFile() {
+    if captureManager.lastVideoUrl != nil {
+        saveVideoWithDialog()
+        return
+    }
+    guard let finalImage = generateFinalImage() else {
+        showSaveFeedback("No hay captura o grabacion para guardar.")
+        return
     }
 
-    @MainActor
-    private func presentSavePanel(allowedTypes: [UTType],
-                                  defaultDir: URL?,
-                                  defaultName: String,
-                                  completion: @escaping (URL?) -> Void) {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = allowedTypes
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = defaultName
-        if let dir = defaultDir { panel.directoryURL = dir }
-        
+    saveImageWithDialog(defaultDirectory: FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first, image: finalImage)
+}
+
+private func presentSavePanel(allowedTypes: [UTType],
+                              defaultDir: URL?,
+                              defaultName: String,
+                              completion: @escaping (URL?) -> Void) {
+    // Ensure we're on main thread for all UI operations
+    if !Thread.isMainThread {
         DispatchQueue.main.async {
-            if let win = NSApp.keyWindow ?? NSApp.mainWindow {
-                panel.beginSheetModal(for: win) { result in
-                    completion(result == .OK ? panel.url : nil)
-                }
-            } else {
-                // fallback non-sheet
-                let result = panel.runModal()
-                completion(result == .OK ? panel.url : nil)
-            }
+            self.presentSavePanel(allowedTypes: allowedTypes, defaultDir: defaultDir, defaultName: defaultName, completion: completion)
         }
+        return
     }
     
-    private func saveImageWithDialog(defaultDirectory: URL?, image: NSImage) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let timestamp = formatter.string(from: Date())
-        let filename = "THISCREEN_\(timestamp).png"
-        
-        presentSavePanel(allowedTypes: [.png], defaultDir: defaultDirectory, defaultName: filename) { url in
-            defer { self.isSaving = false }
-            guard let url = url else { return }
-            
-            do {
-                if let data = image.tiffRepresentation,
-                   let rep = NSBitmapImageRep(data: data),
-                   let pngData = rep.representation(using: .png, properties: [:]) {
-                    try pngData.write(to: url)
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    self.showSaveFeedback("Guardado en \(url.path)")
-                }
-            } catch {
-                print("Error saving image: \(error)")
-                self.showSaveFeedback("No se pudo guardar: \(error.localizedDescription)")
-            }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = allowedTypes
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = defaultName
+    if let dir = defaultDir { panel.directoryURL = dir }
+
+    // Use beginSheetModal which properly retains the panel
+    if let window = WindowManager.shared.windowController?.window {
+        panel.beginSheetModal(for: window) { result in
+            completion(result == .OK ? panel.url : nil)
+        }
+    } else {
+        // Fallback: runModal blocks until done
+        let result = panel.runModal()
+        completion(result == .OK ? panel.url : nil)
+    }
+}
+    
+private func saveImageWithDialog(defaultDirectory: URL?, image: NSImage) {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+    let timestamp = formatter.string(from: Date())
+    let filename = "THISCREEN_\(timestamp).png"
+
+    // Capture image data before presenting panel to avoid capturing self
+    guard let tiffData = image.tiffRepresentation,
+          let rep = NSBitmapImageRep(data: tiffData),
+          let pngData = rep.representation(using: .png, properties: [:]) else {
+        return
+    }
+    
+    presentSavePanel(allowedTypes: [.png], defaultDir: defaultDirectory, defaultName: filename) { url in
+        guard let url = url else { return }
+
+        do {
+            try pngData.write(to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            print("Error saving image: \(error)")
         }
     }
+}
 
     @MainActor
     private func showSaveFeedback(_ message: String) {
