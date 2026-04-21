@@ -902,7 +902,14 @@ struct ContentView: View {
     
     func saveVideoTo(directory: FileManager.SearchPathDirectory) {
         guard let url = captureManager.lastVideoUrl else { return }
-        let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
+
+        // Use THISCREEN folder in Pictures as default, otherwise use the specified directory
+        let dir: URL
+        if directory == .picturesDirectory {
+            dir = CaptureManager.getDefaultSaveDirectory() ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first!
+        } else {
+            dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
+        }
 
         // Use formatted timestamp for better readability
         let formatter = DateFormatter()
@@ -910,49 +917,70 @@ struct ContentView: View {
         let timestamp = formatter.string(from: Date())
         let dest = dir.appendingPathComponent("THISCREEN_Recording_\(timestamp).mov")
 
-        do {
-            try FileManager.default.copyItem(at: url, to: dest)
-            NSWorkspace.shared.activateFileViewerSelecting([dest])
-            showSaveFeedback("Guardado en \(dest.path)")
-        } catch {
-            print("Error saving video to \(directory): \(error)")
-            saveVideoWithDialog(defaultDirectory: dir)
+        // Perform file operation on background queue to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try FileManager.default.copyItem(at: url, to: dest)
+                DispatchQueue.main.async {
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                    self.showSaveFeedback("Guardado en \(dest.path)")
+                }
+            } catch {
+                print("Error saving video to \(directory): \(error)")
+                DispatchQueue.main.async {
+                    self.saveVideoWithDialog(defaultDirectory: dir)
+                }
+            }
         }
     }
     
-func saveToSuggested(directory: FileManager.SearchPathDirectory) {
-    if captureManager.lastVideoUrl != nil {
-      saveVideoTo(directory: directory)
-      return
-    }
-    guard let finalImage = generateFinalImage() else {
-      showSaveFeedback("No hay captura o grabacion para guardar.")
-      return
-    }
-    
-    // For Pictures directory, use save dialog to handle sandbox restrictions
-    if directory == .picturesDirectory {
-      saveImageWithDialog(defaultDirectory: nil, image: finalImage)
-      return
-    }
-    
-    let dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
+    func saveToSuggested(directory: FileManager.SearchPathDirectory) {
+        if captureManager.lastVideoUrl != nil {
+            saveVideoTo(directory: directory)
+            return
+        }
+        guard let finalImage = generateFinalImage() else {
+            showSaveFeedback("No hay captura o grabacion para guardar.")
+            return
+        }
 
-    // Use formatted timestamp for better readability
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-    let timestamp = formatter.string(from: Date())
-    let url = dir.appendingPathComponent("THISCREEN_\(timestamp).png")
+        // Use THISCREEN folder in Pictures as default
+        let dir: URL
+        if directory == .picturesDirectory {
+            dir = CaptureManager.getDefaultSaveDirectory() ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first!
+        } else {
+            dir = FileManager.default.urls(for: directory, in: .userDomainMask).first!
+        }
 
-        do {
-            if let data = finalImage.tiffRepresentation, let rep = NSBitmapImageRep(data: data), let pngData = rep.representation(using: .png, properties: [:]) {
-                try pngData.write(to: url)
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-                showSaveFeedback("Guardado en \(url.path)")
+        // Use formatted timestamp for better readability
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        let url = dir.appendingPathComponent("THISCREEN_\(timestamp).png")
+
+        // Perform file operations on background queue to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let data = finalImage.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: data),
+                  let pngData = rep.representation(using: .png, properties: [:]) else {
+                DispatchQueue.main.async {
+                    self.saveImageWithDialog(defaultDirectory: dir, image: finalImage)
+                }
+                return
             }
-        } catch {
-            print("Error saving image to \(directory): \(error)")
-            saveImageWithDialog(defaultDirectory: dir, image: finalImage)
+
+            do {
+                try pngData.write(to: url)
+                DispatchQueue.main.async {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    self.showSaveFeedback("Guardado en \(url.path)")
+                }
+            } catch {
+                print("Error saving image to \(directory): \(error)")
+                DispatchQueue.main.async {
+                    self.saveImageWithDialog(defaultDirectory: dir, image: finalImage)
+                }
+            }
         }
     }
     
@@ -1090,49 +1118,68 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
         NSPasteboard.general.writeObjects([finalImage])
     }
 
-@MainActor
-func saveToFile() {
-    if captureManager.lastVideoUrl != nil {
-        saveVideoWithDialog()
-        return
-    }
-    guard let finalImage = generateFinalImage() else {
-        showSaveFeedback("No hay captura o grabacion para guardar.")
-        return
-    }
-
-    saveImageWithDialog(defaultDirectory: FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first, image: finalImage)
-}
-
-private func presentSavePanel(allowedTypes: [UTType],
-                              defaultDir: URL?,
-                              defaultName: String,
-                              completion: @escaping (URL?) -> Void) {
-    // Ensure we're on main thread for all UI operations
-    if !Thread.isMainThread {
-        DispatchQueue.main.async {
-            self.presentSavePanel(allowedTypes: allowedTypes, defaultDir: defaultDir, defaultName: defaultName, completion: completion)
+    @MainActor
+    func saveToFile() {
+        if captureManager.lastVideoUrl != nil {
+            saveVideoWithDialog()
+            return
         }
-        return
-    }
-    
-    let panel = NSSavePanel()
-    panel.allowedContentTypes = allowedTypes
-    panel.canCreateDirectories = true
-    panel.nameFieldStringValue = defaultName
-    if let dir = defaultDir { panel.directoryURL = dir }
+        guard let finalImage = generateFinalImage() else {
+            showSaveFeedback("No hay captura o grabacion para guardar.")
+            return
+        }
 
-    // Use beginSheetModal which properly retains the panel
-    if let window = WindowManager.shared.windowController?.window {
+        // Use THISCREEN folder in Pictures as default
+        let defaultDir = CaptureManager.getDefaultSaveDirectory() ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+        saveImageWithDialog(defaultDirectory: defaultDir, image: finalImage)
+    }
+
+    private func presentSavePanel(allowedTypes: [UTType],
+                                  defaultDir: URL?,
+                                  defaultName: String,
+                                  completion: @escaping (URL?) -> Void) {
+        // Ensure we're on main thread for all UI operations
+        if !Thread.isMainThread {
+            DispatchQueue.main.async {
+                self.presentSavePanel(allowedTypes: allowedTypes, defaultDir: defaultDir, defaultName: defaultName, completion: completion)
+            }
+            return
+        }
+
+        // Get the window and temporarily lower its level to avoid z-order issues
+        guard let window = WindowManager.shared.windowController?.window else {
+            // Fallback: no window available, use runModal
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = allowedTypes
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = defaultName
+            if let dir = defaultDir { panel.directoryURL = dir }
+            NSApp.activate(ignoringOtherApps: true)
+            let result = panel.runModal()
+            completion(result == .OK ? panel.url : nil)
+            return
+        }
+
+        // Store original window level and lower it temporarily
+        let originalLevel = window.level
+        window.level = .normal
+
+        // Ensure app is active
+        NSApp.activate(ignoringOtherApps: true)
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = allowedTypes
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = defaultName
+        if let dir = defaultDir { panel.directoryURL = dir }
+
+        // Use beginSheetModal for proper modal behavior
         panel.beginSheetModal(for: window) { result in
+            // Restore original window level
+            window.level = originalLevel
             completion(result == .OK ? panel.url : nil)
         }
-    } else {
-        // Fallback: runModal blocks until done
-        let result = panel.runModal()
-        completion(result == .OK ? panel.url : nil)
     }
-}
     
 private func saveImageWithDialog(defaultDirectory: URL?, image: NSImage) {
     let formatter = DateFormatter()

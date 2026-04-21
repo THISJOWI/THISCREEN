@@ -4,20 +4,45 @@ import Combine
 
 class CaptureManager: ObservableObject {
     static let shared = CaptureManager()
-    
+
     enum RecordingMode {
         case entireScreen, selectedArea, currentCrop
     }
-    
+
     @Published var screenshot: NSImage? = nil
     @Published var lastVideoUrl: URL? = nil
     @Published var isInProgress: Bool = false
     @Published var isRecording: Bool = false
     @Published var activeRecordingProcess: Process? = nil
-    
+
     private var observers: [NSObjectProtocol] = []
-    
+
+    // MARK: - Default Save Directory
+    static let defaultFolderName = "THISCREEN"
+
+    /// Returns the default save directory (~/Pictures/THISCREEN), creating it if needed
+    static func getDefaultSaveDirectory() -> URL? {
+        guard let picturesDir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let thiscreenDir = picturesDir.appendingPathComponent(defaultFolderName, isDirectory: true)
+
+        // Create directory if it doesn't exist
+        if !FileManager.default.fileExists(atPath: thiscreenDir.path) {
+            do {
+                try FileManager.default.createDirectory(at: thiscreenDir, withIntermediateDirectories: true, attributes: nil)
+                print("[CaptureManager] Created default save directory: \(thiscreenDir.path)")
+            } catch {
+                print("[CaptureManager] Error creating directory: \(error)")
+                return nil
+            }
+        }
+        return thiscreenDir
+    }
+
     init() {
+        // Ensure default directory exists on init
+        _ = CaptureManager.getDefaultSaveDirectory()
         setupObservers()
     }
     
