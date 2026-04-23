@@ -62,6 +62,32 @@ struct DrawnElement: Identifiable, Equatable {
         if let end = endPoint { endPoint = CGPoint(x: end.x + translation.width, y: end.y + translation.height) }
         points = points.map { CGPoint(x: $0.x + translation.width, y: $0.y + translation.height) }
     }
+
+    func hitTest(point: CGPoint, tolerance: CGFloat = 20) -> Bool {
+        // Para elementos de trazo (pen, pixelate), verificar proximidad a los puntos
+        if tool == .pen || tool == .pixelate {
+            for p in points {
+                if hypot(p.x - point.x, p.y - point.y) < max(lineWidth / 2, tolerance) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        // Para elementos con startPoint y endPoint, verificar si está dentro del rectángulo
+        let start = startPoint ?? .zero
+        let end = endPoint ?? .zero
+        let rect = CGRect(
+            x: min(start.x, end.x),
+            y: min(start.y, end.y),
+            width: abs(start.x - end.x),
+            height: abs(start.y - end.y)
+        )
+
+        // Expandir el rectángulo por la tolerancia
+        let expandedRect = rect.insetBy(dx: -tolerance, dy: -tolerance)
+        return expandedRect.contains(point)
+    }
 }
 
 struct InteractiveDrawingView: View {
@@ -70,100 +96,107 @@ struct InteractiveDrawingView: View {
     @Binding var currentColor: Color
     @Binding var currentLineWidth: CGFloat
     @Binding var cropRect: CGRect?
+    @Binding var selectedElementID: UUID?
     var pixelatedNSImage: NSImage? = nil
-    var onApplyCrop: (() -> Void)? = nil
-    
+    var onApplyCrop: ((CGSize) -> Void)? = nil
+    var viewportSize: CGSize = .zero
+
     @State private var currentElement: DrawnElement?
-    @State private var selectedElementID: UUID?
     @State private var dragStartPoint: CGPoint?
     @State private var textInputLocation: CGPoint? = nil
     @State private var textInputBuffer: String = ""
     @FocusState private var isTextFieldFocused: Bool
-    
-    var body: some View {
-        ZStack {
-            Canvas { context, size in
-                 let resolvedPixelated: GraphicsContext.ResolvedImage? = pixelatedNSImage.map { context.resolve(Image(nsImage: $0)) }
-                 for element in elements {
-                     var ctx = context
-                     if element.id == selectedElementID { ctx.addFilter(.shadow(color: .blue.opacity(0.8), radius: 8)) }
-                     drawElement(context: ctx, element: element, size: size, resolvedPixelated: resolvedPixelated)
-                 }
-                 if let currentElement = currentElement {
-                     drawElement(context: context, element: currentElement, size: size, resolvedPixelated: resolvedPixelated)
-                 }
-                 if let crop = cropRect, (currentTool == .crop) {
-                     context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.4)))
-                     context.blendMode = .destinationOut
-                     context.fill(Path(crop), with: .color(.black))
-                     context.blendMode = .normal
-                     context.stroke(Path(crop), with: .color(.white), lineWidth: 1.5)
-                 }
-            }
+
+  var body: some View {
+    ZStack {
+      // Canvas para dibujar - deshabilitado cuando la herramienta es texto
+      Canvas { context, size in
+        let resolvedPixelated: GraphicsContext.ResolvedImage? = pixelatedNSImage.map { context.resolve(Image(nsImage: $0)) }
+        for element in elements {
+          var ctx = context
+          if element.id == selectedElementID { ctx.addFilter(.shadow(color: .blue.opacity(0.8), radius: 8)) }
+          drawElement(context: ctx, element: element, size: size, resolvedPixelated: resolvedPixelated)
+        }
+        if let currentElement = currentElement {
+          drawElement(context: context, element: currentElement, size: size, resolvedPixelated: resolvedPixelated)
+        }
+        if let crop = cropRect, (currentTool == .crop) {
+          context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.4)))
+          context.blendMode = .destinationOut
+          context.fill(Path(crop), with: .color(.black))
+          context.blendMode = .normal
+          context.stroke(Path(crop), with: .color(.white), lineWidth: 1.5)
+        }
+      }
       // GESTO PARA SELECT (mover elementos) - solo activo cuando currentTool == .select
       .highPriorityGesture(
         currentTool == .select ?
-          DragGesture(minimumDistance: 0)
-            .onChanged { value in
-              if dragStartPoint == nil { findElementAt(value.startLocation) }
-              if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
-                let translation = CGSize(width: value.translation.width - (dragStartPoint?.x ?? 0), height: value.translation.height - (dragStartPoint?.y ?? 0))
-                elements[index].translate(by: translation)
-                dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
-              }
-            }
-            .onEnded { _ in
-              dragStartPoint = nil
-            }
-          : nil
+        DragGesture(minimumDistance: 0)
+        .onChanged { value in
+          if dragStartPoint == nil {
+            findElementAt(value.startLocation)
+            dragStartPoint = .zero
+          }
+          if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
+            let translation = CGSize(width: value.translation.width - dragStartPoint!.x, height: value.translation.height - dragStartPoint!.y)
+            elements[index].translate(by: translation)
+            dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
+          }
+        }
+        .onEnded { _ in
+          dragStartPoint = nil
+        }
+        : nil
       )
       // GESTO PARA DIBUJAR - solo activo cuando currentTool es de dibujo (no select, no text)
       .highPriorityGesture(
         (currentTool != .select && currentTool != .text) ?
-          DragGesture(minimumDistance: 0)
-            .onChanged { value in
-              switch currentTool {
-              case .crop:
-                let start = value.startLocation
-                let end = value.location
-                cropRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
-              case .pen, .pixelate:
-                if currentElement == nil {
-                  currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [value.location], startPoint: value.location, endPoint: value.location)
-                } else {
-                  currentElement?.points.append(value.location)
-                }
-              case .line, .arrow, .rectangle, .oval:
-                if currentElement == nil {
-                  currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [], startPoint: value.startLocation, endPoint: value.location)
-                } else {
-                  currentElement?.endPoint = value.location
-                }
-              default:
-                break
-              }
+        DragGesture(minimumDistance: 0)
+        .onChanged { value in
+          switch currentTool {
+          case .crop:
+            let start = value.startLocation
+            let end = value.location
+            cropRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
+          case .pen, .pixelate:
+            if currentElement == nil {
+              currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [value.location], startPoint: value.location, endPoint: value.location)
+            } else {
+              currentElement?.points.append(value.location)
             }
-            .onEnded { _ in
-              if currentTool == .crop { return }
-              if let newElement = currentElement {
-                withAnimation { elements.append(newElement) }
-                currentElement = nil
-              }
+          case .line, .arrow, .rectangle, .oval:
+            if currentElement == nil {
+              currentElement = DrawnElement(tool: currentTool, color: currentColor, lineWidth: currentLineWidth, points: [], startPoint: value.startLocation, endPoint: value.location)
+            } else {
+              currentElement?.endPoint = value.location
             }
-          : nil
+          default:
+            break
+          }
+        }
+        .onEnded { _ in
+          if currentTool == .crop { return }
+          if let newElement = currentElement {
+            withAnimation { elements.append(newElement) }
+            currentElement = nil
+          }
+        }
+        : nil
       )
-      // GESTO PARA TEXT - solo activo cuando currentTool == .text
-      .highPriorityGesture(
-        currentTool == .text ?
-          DragGesture(minimumDistance: 0)
-            .onEnded { value in
-              textInputLocation = value.location
-              textInputBuffer = ""
-            }
-          : nil
-      )
-            
-            if let location = textInputLocation {
+      .allowsHitTesting(currentTool != .text)
+
+      // Capa de captura para texto - overlay transparente que captura taps (encima del Canvas)
+      if currentTool == .text && textInputLocation == nil {
+        Color.clear
+          .contentShape(Rectangle())
+          .onTapGesture { location in
+            textInputLocation = location
+            textInputBuffer = ""
+          }
+          .allowsHitTesting(true)
+      }
+
+      if let location = textInputLocation {
                 TextField("...", text: $textInputBuffer, onCommit: {
                     if !textInputBuffer.isEmpty { 
                         elements.append(DrawnElement(tool: .text, color: currentColor, lineWidth: max(currentLineWidth * 3, 20), startPoint: location, text: textInputBuffer)) 
@@ -195,7 +228,10 @@ struct InteractiveDrawingView: View {
                     Button("") { cancelTextEditing() }.keyboardShortcut(.escape, modifiers: [])
                 }
                 if currentTool == .crop && cropRect != nil {
-                    Button("") { onApplyCrop?() }.keyboardShortcut(.return, modifiers: [])
+                    Button("") {
+                        // Use the actual viewport size passed from parent
+                        onApplyCrop?(viewportSize)
+                    }.keyboardShortcut(.return, modifiers: [])
                 }
             }
             .opacity(0)
@@ -217,11 +253,10 @@ struct InteractiveDrawingView: View {
     
     private func findElementAt(_ point: CGPoint) {
         for element in elements.reversed() {
-            let start = element.startPoint ?? .zero; let end = element.endPoint ?? .zero
-            let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: max(abs(start.x - end.x), 20), height: max(abs(start.y - end.y), 20))
-            if element.tool == .pen || element.tool == .pixelate {
-                for p in element.points { if hypot(p.x - point.x, p.y - point.y) < 20 { selectedElementID = element.id; return } }
-            } else if rect.insetBy(dx: -20, dy: -20).contains(point) { selectedElementID = element.id; return }
+            if element.hitTest(point: point) {
+                selectedElementID = element.id
+                return
+            }
         }
         selectedElementID = nil
     }
@@ -454,7 +489,8 @@ struct ContentView: View {
     @State private var panStartOffset: CGSize = .zero
     @State private var pixelatedImage: NSImage? = nil
     @State private var cropRect: CGRect? = nil
-    
+    @State private var selectedElementID: UUID? = nil
+
     // UI Local States
     @State private var includeMic: Bool = false
     @State private var showClicks: Bool = true
@@ -502,53 +538,73 @@ struct ContentView: View {
                     }.padding(.bottom, 24)
                 }
             }
-        else if let img = captureManager.screenshot {
-            GeometryReader { geo in
-                let scale = min(geo.size.width / (img.size.width + 40), geo.size.height / (img.size.height + 150)) * zoomScale
-                ZStack {
-                    Image(nsImage: img)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                    InteractiveDrawingView(elements: $elements, currentTool: $currentTool, currentColor: $currentColor, currentLineWidth: $currentLineWidth, cropRect: $cropRect, pixelatedNSImage: pixelatedImage, onApplyCrop: applyCrop)
-                }
-                .frame(width: img.size.width, height: img.size.height)
-                .scaleEffect(scale)
-                .offset(panOffset)
-                .position(x: geo.size.width / 2, y: (geo.size.height - 100) / 2)
-                .gesture(
-                    MagnificationGesture()
-                        .onChanged { value in
-                            let newScale = baseZoomScale * value
-                            zoomScale = max(0.25, min(5.0, newScale))
-                        }
-                        .onEnded { _ in baseZoomScale = zoomScale }
-                )
-      .simultaneousGesture(
-        DragGesture(minimumDistance: 5)
+    else if let img = captureManager.screenshot {
+      GeometryReader { geo in
+        // Calculate scale to fill the entire available space (no black bars)
+        // Use the larger of width/height ratios to ensure image fills the space
+        let baseScale = max(geo.size.width / img.size.width, geo.size.height / img.size.height)
+        let scale = baseScale * zoomScale
+        ZStack {
+          Image(nsImage: img)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fill)
+                    InteractiveDrawingView(
+                        elements: $elements,
+                        currentTool: $currentTool,
+                        currentColor: $currentColor,
+                        currentLineWidth: $currentLineWidth,
+                        cropRect: $cropRect,
+                        selectedElementID: $selectedElementID,
+                        pixelatedNSImage: pixelatedImage,
+                        onApplyCrop: { size in
+                            applyCrop(viewportSize: size, currentZoomScale: zoomScale, currentPanOffset: panOffset)
+                        },
+                        viewportSize: geo.size
+                    )
+        }
+        .frame(width: img.size.width, height: img.size.height)
+        .scaleEffect(scale)
+        .offset(panOffset)
+        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+      .gesture(
+        MagnificationGesture()
           .onChanged { value in
-            // Only allow panning when zoomed in and not using drawing tools
-            if zoomScale > 1.0 && currentTool == .select {
-              panOffset = CGSize(
-                width: panStartOffset.width + value.translation.width,
-                height: panStartOffset.height + value.translation.height
-              )
-            }
+            let newScale = baseZoomScale * value
+            // Minimum zoom is 1.0 (actual size), maximum is 5.0x
+            zoomScale = max(1.0, min(5.0, newScale))
           }
-          .onEnded { value in
-            panStartOffset = panOffset
-          }
+          .onEnded { _ in baseZoomScale = zoomScale }
       )
-      .mouseWheelZoom(zoomScale: $zoomScale, baseZoomScale: $baseZoomScale)
-      // Use highPriorityGesture to ensure Canvas gestures take precedence
-      .highPriorityGesture(
-        TapGesture()
-          .onEnded { _ in
-            // This empty gesture ensures Canvas receives events first
-          }
-      )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5)
+                .onChanged { value in
+                    // Only allow panning in select mode when image is larger than viewport
+                    // AND no element is currently being dragged
+                    if currentTool == .select && selectedElementID == nil {
+                        let scaledWidth = img.size.width * scale
+                        let scaledHeight = img.size.height * scale
+                        let viewportWidth = geo.size.width
+                        let viewportHeight = geo.size.height
 
-            }
+                        // Only allow panning if image is larger than viewport
+                        if scaledWidth > viewportWidth || scaledHeight > viewportHeight {
+                            let newOffset = CGSize(
+                                width: panStartOffset.width + value.translation.width,
+                                height: panStartOffset.height + value.translation.height
+                            )
+                            // Apply limits to prevent white space
+                            panOffset = limitPanOffset(newOffset, imageSize: img.size, scale: scale, viewportSize: CGSize(width: viewportWidth, height: viewportHeight))
+                        }
+                    }
+                }
+                .onEnded { value in
+                    panStartOffset = panOffset
+                }
+            )
+      .mouseWheelZoom(zoomScale: $zoomScale, baseZoomScale: $baseZoomScale)
+
+    }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 VStack {
                     Spacer()
@@ -561,15 +617,15 @@ struct ContentView: View {
                                 Text(captureManager.isRecording ? "🔴 RECORDING..." : "Drag to select area and apply").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundColor(captureManager.isRecording ? .red : .secondary)
                             }.padding(.top, 8).transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-            HStack {
-                Image(systemName: "magnifyingglass")
-                Slider(value: $zoomScale, in: 0.25...5.0).frame(width: 80)
-                Text("\(Int(zoomScale * 100))%")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 35)
-                // Reset pan button (only visible when zoomed or panned)
-                if zoomScale != 1.0 || panOffset != .zero {
+          HStack {
+            Image(systemName: "magnifyingglass")
+            Slider(value: $zoomScale, in: 1.0...5.0).frame(width: 80)
+            Text("\(Int(zoomScale * 100))%")
+              .font(.system(size: 10, weight: .medium))
+              .foregroundColor(.secondary)
+              .frame(width: 35)
+            // Reset pan button (only visible when zoomed beyond 1.0 or panned)
+            if zoomScale > 1.0 || panOffset != .zero {
                     Button(action: {
                         withAnimation(.spring(response: 0.3)) {
                             zoomScale = 1.0
@@ -1060,49 +1116,196 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
         }
     }
     
-    func applyCrop() {
+    func applyCrop(viewportSize: CGSize, currentZoomScale: CGFloat, currentPanOffset: CGSize) {
+        // Capture all state values at the beginning to avoid threading issues
         guard let img = captureManager.screenshot, let crop = cropRect else { return }
-        
+
+        // Capture current elements and pixelated image before any async work
+        let currentElements = elements
+        let currentPixelatedImage = pixelatedImage
+
         pushHistoryState()
-        
-        let targetSize = crop.size
-        let renderer = ImageRenderer(content: ZStack {
-            Image(nsImage: img).resizable()
-            InteractiveDrawingView(elements: .constant(elements), currentTool: .constant(.arrow), currentColor: .constant(.red), currentLineWidth: .constant(8.0), cropRect: .constant(nil), pixelatedNSImage: pixelatedImage)
-        }.frame(width: img.size.width, height: img.size.height).offset(x: -crop.midX + img.size.width/2, y: -crop.midY + img.size.height/2).frame(width: targetSize.width, height: targetSize.height).clipped())
-        if let cgImage = renderer.cgImage {
-            ignoreChanges = true
-            let newScreenshot = NSImage(cgImage: cgImage, size: targetSize)
-            withAnimation {
-                captureManager.screenshot = newScreenshot
-                self.elements.removeAll()
-                self.redoStack.removeAll()
-                self.pixelatedImage = nil
-                self.cropRect = nil
+
+        // Calculate the scale factor used to display the image
+        // Use the same logic as in the GeometryReader: max to fill the viewport
+        let baseScale = max(viewportSize.width / img.size.width, viewportSize.height / img.size.height)
+        let displayScale = baseScale * currentZoomScale
+
+        // Calculate the actual displayed image size
+        let displayedImageWidth = img.size.width * displayScale
+        let displayedImageHeight = img.size.height * displayScale
+
+        // Calculate the offset needed to center the image (same as in GeometryReader)
+        let centeringOffsetX = (viewportSize.width - displayedImageWidth) / 2
+        let centeringOffsetY = (viewportSize.height - displayedImageHeight) / 2
+
+        // Convert crop rect from screen coordinates to image coordinates
+        // Account for: centering offset, pan offset, and scale
+        let imageCropX = (crop.origin.x - centeringOffsetX - currentPanOffset.width) / displayScale
+        let imageCropY = (crop.origin.y - centeringOffsetY - currentPanOffset.height) / displayScale
+        let imageCropWidth = crop.size.width / displayScale
+        let imageCropHeight = crop.size.height / displayScale
+
+        let imageCropRect = CGRect(
+            x: max(0, min(imageCropX, img.size.width)),
+            y: max(0, min(imageCropY, img.size.height)),
+            width: min(imageCropWidth, img.size.width - max(0, imageCropX)),
+            height: min(imageCropHeight, img.size.height - max(0, imageCropY))
+        )
+
+        // Ensure valid crop rect
+        guard imageCropRect.width > 0 && imageCropRect.height > 0 else {
+            cropRect = nil
+            return
+        }
+
+        // Create the cropped image by rendering just the crop region
+        // Use a simpler approach without nested InteractiveDrawingView
+        let renderer = ImageRenderer(content: 
+            ZStack {
+                Image(nsImage: img).resizable()
+                // Draw elements directly using Canvas
+                Canvas { context, size in
+                    let resolvedPixelated: GraphicsContext.ResolvedImage? = currentPixelatedImage.map { context.resolve(Image(nsImage: $0)) }
+                    for element in currentElements {
+                        drawElementInContext(context: &context, element: element, size: size, resolvedPixelated: resolvedPixelated)
+                    }
+                }
+                .frame(width: img.size.width, height: img.size.height)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { ignoreChanges = false }
+            .frame(width: img.size.width, height: img.size.height)
+            // Offset to position the crop region at origin
+            .offset(x: -imageCropRect.minX, y: -imageCropRect.minY)
+            .frame(width: imageCropRect.width, height: imageCropRect.height)
+            .clipped()
+        )
+
+        if let cgImage = renderer.cgImage {
+            let newScreenshot = NSImage(cgImage: cgImage, size: imageCropRect.size)
+            DispatchQueue.main.async {
+                self.ignoreChanges = true
+                withAnimation {
+                    self.captureManager.screenshot = newScreenshot
+                    self.elements.removeAll()
+                    self.redoStack.removeAll()
+                    self.pixelatedImage = nil
+                    self.cropRect = nil
+                    self.zoomScale = 1.0
+                    self.baseZoomScale = 1.0
+                    self.panOffset = .zero
+                    self.panStartOffset = .zero
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.ignoreChanges = false }
+            }
         }
     }
 
-    func undo() { 
-        if let lastElement = elements.popLast() { redoStack.append(lastElement) } 
-        else if let lastState = historyStack.popLast() { 
-            ignoreChanges = true
-            captureManager.screenshot = imageFromPNGData(lastState.screenshotPNGData)
-            elements = lastState.elements
-            pixelatedImage = nil
-            updatePixelatedImageCacheIfNeeded()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { ignoreChanges = false }
+    // Helper function for drawing elements in the crop renderer
+    private func drawElementInContext(context: inout GraphicsContext, element: DrawnElement, size: CGSize, resolvedPixelated: GraphicsContext.ResolvedImage?) {
+        let start = element.startPoint ?? .zero
+        let end = element.endPoint ?? .zero
+        let rect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(start.x - end.x), height: abs(start.y - end.y))
+        var path = Path()
+        switch element.tool {
+        case .pen, .pixelate:
+            guard let first = element.points.first else { return }
+            path.move(to: first)
+            for p in element.points.dropFirst() { path.addLine(to: p) }
+        case .rectangle: path.addRect(rect)
+        case .oval: path.addEllipse(in: rect)
+        case .line:
+            path.move(to: start)
+            path.addLine(to: end)
+        case .arrow:
+            path.move(to: start)
+            path.addLine(to: end)
+            let angle = atan2(end.y - start.y, end.x - start.x)
+            let len: CGFloat = 20 + element.lineWidth * 2
+            let p1 = CGPoint(x: end.x - len * cos(angle - .pi/6), y: end.y - len * sin(angle - .pi/6))
+            let p2 = CGPoint(x: end.x - len * cos(angle + .pi/6), y: end.y - len * sin(angle + .pi/6))
+            var head = Path()
+            head.move(to: end)
+            head.addLine(to: p1)
+            head.move(to: end)
+            head.addLine(to: p2)
+            context.stroke(head, with: .color(element.color), style: StrokeStyle(lineWidth: element.lineWidth, lineCap: .round, lineJoin: .round))
+        case .text:
+            context.draw(Text(element.text).font(.system(size: element.lineWidth, weight: .bold)).foregroundColor(element.color), at: start)
+            return
+        default: break
         }
+        if element.tool == .pixelate {
+            if let pix = resolvedPixelated {
+                let mask = path.strokedPath(StrokeStyle(lineWidth: element.lineWidth * 4, lineCap: .round, lineJoin: .round))
+                context.clip(to: mask)
+                context.draw(pix, in: CGRect(origin: .zero, size: size))
+                return
+            }
+        }
+        context.stroke(path, with: .color(element.color), style: StrokeStyle(lineWidth: element.lineWidth, lineCap: .round, lineJoin: .round))
     }
 
-    @MainActor
-    private func generateFinalImage() -> NSImage? {
+  func undo() {
+    if let lastElement = elements.popLast() { redoStack.append(lastElement) }
+    else if let lastState = historyStack.popLast() {
+      ignoreChanges = true
+      captureManager.screenshot = imageFromPNGData(lastState.screenshotPNGData)
+      elements = lastState.elements
+      pixelatedImage = nil
+      updatePixelatedImageCacheIfNeeded()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { ignoreChanges = false }
+    }
+  }
+
+  /// Limits pan offset to prevent white space around the image
+  /// Ensures the image always fills the viewport (no empty space visible)
+  private func limitPanOffset(_ offset: CGSize, imageSize: CGSize, scale: CGFloat, viewportSize: CGSize) -> CGSize {
+    let scaledWidth = imageSize.width * scale
+    let scaledHeight = imageSize.height * scale
+    
+    // If image is smaller than viewport in both dimensions, center it (no panning)
+    if scaledWidth <= viewportSize.width && scaledHeight <= viewportSize.height {
+      return .zero
+    }
+    
+    // Calculate maximum allowed pan in each direction
+    // The image edge should never go past the viewport edge (no white space)
+    var maxPanX: CGFloat = 0
+    var maxPanY: CGFloat = 0
+    
+    // If image is wider than viewport, allow horizontal panning
+    if scaledWidth > viewportSize.width {
+      maxPanX = (scaledWidth - viewportSize.width) / 2
+    }
+    
+    // If image is taller than viewport, allow vertical panning
+    if scaledHeight > viewportSize.height {
+      maxPanY = (scaledHeight - viewportSize.height) / 2
+    }
+    
+    // Clamp the offset to prevent white space
+    return CGSize(
+      width: min(max(offset.width, -maxPanX), maxPanX),
+      height: min(max(offset.height, -maxPanY), maxPanY)
+    )
+  }
+
+  @MainActor
+  private func generateFinalImage() -> NSImage? {
         guard let img = captureManager.screenshot else { return nil }
         
         let renderer = ImageRenderer(content: ZStack {
             Image(nsImage: img).resizable()
-            InteractiveDrawingView(elements: .constant(elements), currentTool: .constant(.arrow), currentColor: .constant(.red), currentLineWidth: .constant(8.0), cropRect: .constant(nil), pixelatedNSImage: pixelatedImage)
+            InteractiveDrawingView(
+                elements: .constant(elements),
+                currentTool: .constant(.arrow),
+                currentColor: .constant(.red),
+                currentLineWidth: .constant(8.0),
+                cropRect: .constant(nil),
+                selectedElementID: .constant(nil),
+                pixelatedNSImage: pixelatedImage,
+                viewportSize: CGSize(width: img.size.width, height: img.size.height)
+            )
         }.frame(width: img.size.width, height: img.size.height))
         
         if let cgImage = renderer.cgImage {
@@ -1260,13 +1463,14 @@ struct MouseWheelZoomModifier: ViewModifier {
                     let delta = event.scrollingDeltaY
                     guard delta != 0 else { return event }
                     
-                    // Use a comfortable zoom speed factor
-                    let zoomFactor: CGFloat = 0.015
-                    let newZoom = zoomScale + (delta * zoomFactor)
-                    let clampedZoom = max(0.25, min(5.0, newZoom))
-                    
-                    zoomScale = clampedZoom
-                    baseZoomScale = clampedZoom
+              // Use a comfortable zoom speed factor
+              let zoomFactor: CGFloat = 0.015
+              let newZoom = zoomScale + (delta * zoomFactor)
+              // Minimum zoom is 1.0 (actual size), maximum is 5.0x
+              let clampedZoom = max(1.0, min(5.0, newZoom))
+              
+              zoomScale = clampedZoom
+              baseZoomScale = clampedZoom
                     
                     // Return nil to consume the event (prevent scroll bounce)
                     return nil

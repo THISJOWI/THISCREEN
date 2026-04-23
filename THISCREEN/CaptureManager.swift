@@ -127,86 +127,130 @@ class CaptureManager: ObservableObject {
         }
     }
     
-    func startRecording(mode: RecordingMode = .selectedArea, includeMic: Bool = false, showClicks: Bool = true) {
-        guard !isInProgress else {
-            print("[CaptureManager] Recording already in progress, ignoring request")
-            return
-        }
-        isInProgress = true
-        print("[CaptureManager] Starting screen recording, mode: \(mode)")
+  func startRecording(mode: RecordingMode = .selectedArea, includeMic: Bool = false, showClicks: Bool = true) {
+    guard !isInProgress else {
+      print("[CaptureManager] Recording already in progress, ignoring request")
+      return
+    }
+    
+    // Check macOS version for native video recording support
+    // screencapture -V requires macOS 14.0 or later
+    if #available(macOS 14.0, *) {
+      startNativeRecording(mode: mode, includeMic: includeMic, showClicks: showClicks)
+    } else {
+      // Show error for older macOS versions
+      DispatchQueue.main.async {
+        self.showRecordingError("Video recording requires macOS 14.0 or later. Please upgrade your macOS version to use screen recording.")
+      }
+    }
+  }
+  
+  @available(macOS 14.0, *)
+  private func startNativeRecording(mode: RecordingMode, includeMic: Bool, showClicks: Bool) {
+    isInProgress = true
+    print("[CaptureManager] Starting native screen recording, mode: \(mode)")
 
-        var args = ["-v"]
+    // Use -v (lowercase) for continuous video recording (macOS 14+)
+    // -v captures video until stopped (unlike -V which requires duration)
+    var args = ["-v"]
 
-        switch mode {
-        case .entireScreen:
-            break
-        case .selectedArea, .currentCrop:
-            // Force the interactive UI to start directly in video mode.
-            args.append(contentsOf: ["-J", "video", "-i"])
-        }
+    switch mode {
+    case .entireScreen:
+      // No additional args needed for full screen recording
+      break
+    case .selectedArea, .currentCrop:
+      // -i enables interactive area selection
+      args.append("-i")
+    }
 
-        if showClicks { args.append("-k") }
-        if includeMic { args.append("-g") }
-        let videoUrl = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("THISCREEN_recording.mov")
-        try? FileManager.default.removeItem(at: videoUrl)
+    if showClicks { args.append("-k") }
+    if includeMic { args.append("-g") }
+    
+    let videoUrl = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("THISCREEN_recording.mov")
+    try? FileManager.default.removeItem(at: videoUrl)
 
-        args.append(videoUrl.path)
+    args.append(videoUrl.path)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = args
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    process.arguments = args
 
-        // Hide app before recording - wait for hide to complete
+    // Hide app before recording - wait for hide to complete
+    DispatchQueue.main.async {
+      print("[CaptureManager] Hiding app before recording")
+      NSApp.hide(nil)
+
+      // Small delay to ensure app is fully hidden before starting recording
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        self.executeRecording(process: process, videoUrl: videoUrl)
+      }
+    }
+  }
+  
+  private func showRecordingError(_ message: String) {
+    DispatchQueue.main.async {
+      let alert = NSAlert()
+      alert.messageText = "Recording Error"
+      alert.informativeText = message
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "OK")
+      alert.runModal()
+    }
+  }
+
+  private func executeRecording(process: Process, videoUrl: URL) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      do {
         DispatchQueue.main.async {
-            print("[CaptureManager] Hiding app before recording")
-            NSApp.hide(nil)
-
-            // Small delay to ensure app is fully hidden before starting recording
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.executeRecording(process: process, videoUrl: videoUrl)
-            }
+          self.isRecording = true
+          self.activeRecordingProcess = process
+          print("[CaptureManager] Recording process started")
         }
-    }
-
-    private func executeRecording(process: Process, videoUrl: URL) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                DispatchQueue.main.async {
-                    self.isRecording = true
-                    self.activeRecordingProcess = process
-                    print("[CaptureManager] Recording process started")
-                }
-                try process.run()
-                process.waitUntilExit()
-
-                let videoPath = videoUrl.path
-                let videoExists = FileManager.default.fileExists(atPath: videoPath)
-                print("[CaptureManager] Recording completed, file exists: \(videoExists)")
-
-                DispatchQueue.main.async {
-                    self.isRecording = false
-                    self.isInProgress = false
-                    self.activeRecordingProcess = nil
-
-                    if videoExists {
-                        self.screenshot = nil
-                        self.lastVideoUrl = videoUrl
-                        // Post notification to trigger save dialog automatically
-                        NotificationCenter.default.post(name: NSNotification.Name("TriggerAutoSaveVideo"), object: nil)
-                    }
-                    self.bringToFront()
-                }
-            } catch {
-                print("[CaptureManager] Recording error: \(error)")
-                DispatchQueue.main.async {
-                    self.isRecording = false
-                    self.isInProgress = false
-                    self.activeRecordingProcess = nil
-                    self.bringToFront()
-                }
-            }
+        
+        // Set up termination handler to capture exit code
+        process.terminationHandler = { proc in
+          print("[CaptureManager] Recording process terminated with exit code: \(proc.terminationStatus)")
         }
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        let videoPath = videoUrl.path
+        let videoExists = FileManager.default.fileExists(atPath: videoPath)
+        let exitCode = process.terminationStatus
+        print("[CaptureManager] Recording completed, file exists: \(videoExists), exit code: \(exitCode)")
+        
+        DispatchQueue.main.async {
+          self.isRecording = false
+          self.isInProgress = false
+          self.activeRecordingProcess = nil
+          
+          if videoExists && exitCode == 0 {
+            self.screenshot = nil
+            self.lastVideoUrl = videoUrl
+            // Post notification to trigger save dialog automatically
+            NotificationCenter.default.post(name: NSNotification.Name("TriggerAutoSaveVideo"), object: nil)
+          } else {
+            // Show error if recording failed
+            let errorMessage = exitCode != 0 ? 
+              "Screen recording failed with exit code \(exitCode). Please check Screen Recording permissions in System Settings > Privacy & Security." :
+              "Recording file was not created. Please try again."
+            self.showRecordingError(errorMessage)
+          }
+          self.bringToFront()
+        }
+      } catch {
+        print("[CaptureManager] Recording error: \(error)")
+        DispatchQueue.main.async {
+          self.isRecording = false
+          self.isInProgress = false
+          self.activeRecordingProcess = nil
+          self.showRecordingError("Failed to start recording: \(error.localizedDescription)")
+          self.bringToFront()
+        }
+      }
     }
+  }
     
     func stopRecording() {
         if let process = activeRecordingProcess, process.isRunning {
