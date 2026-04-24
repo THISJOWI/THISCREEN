@@ -540,15 +540,16 @@ struct ContentView: View {
             }
     else if let img = captureManager.screenshot {
       GeometryReader { geo in
-        // Calculate scale to fill the entire available space (no black bars)
-        // Use the larger of width/height ratios to ensure image fills the space
-        let baseScale = max(geo.size.width / img.size.width, geo.size.height / img.size.height)
+        // Calculate scale to fit the image within the available space
+        // Use min() to show the image at actual size or smaller (never larger than viewport)
+        // This ensures the image is displayed at 1:1 pixel ratio when it fits
+        let baseScale = min(geo.size.width / img.size.width, geo.size.height / img.size.height)
         let scale = baseScale * zoomScale
         ZStack {
           Image(nsImage: img)
-            .resizable()
-            .interpolation(.high)
-            .aspectRatio(contentMode: .fill)
+          .resizable()
+          .interpolation(.high)
+          .aspectRatio(contentMode: .fit)
                     InteractiveDrawingView(
                         elements: $elements,
                         currentTool: $currentTool,
@@ -669,30 +670,37 @@ struct ContentView: View {
                             HStack(spacing: 8) {
                                 ActionButton(systemName: "arrow.uturn.backward", action: undo, disabled: elements.isEmpty && historyStack.isEmpty)
                                 
-                                if !captureManager.isRecording {
-                                    HStack(spacing: 12) {
-                                        Menu {
-                                            Button(action: { captureManager.startRecording(mode: .entireScreen, includeMic: includeMic, showClicks: showClicks) }) {
-                                                Label("Record Entire Screen", systemImage: "macwindow")
-                                            }
-                                            Button(action: { captureManager.startRecording(mode: .selectedArea, includeMic: includeMic, showClicks: showClicks) }) {
-                                                Label("Record Selected Area", systemImage: "rectangle.dashed.badge.record")
-                                            }
-                                        } label: {
-                                            GlassIcon(
-                                                systemName: "video.fill",
-                                                size: 40,
-                                                tint: .red,
-                                                isSelected: false,
-                                                isHovered: false,
-                                                disabled: false
-                                            )
-                                        }
-                                        .menuStyle(.borderlessButton)
-                                        .frame(width: 40, height: 40)
-                                    }
-                                } else {
-                                    Button(action: { captureManager.stopRecording() }) { 
+      if !captureManager.isRecording {
+        Button(action: { captureManager.startRecording(mode: .entireScreen, includeMic: includeMic, showClicks: showClicks) }) {
+          GlassIcon(
+            systemName: "video.fill",
+            size: 40,
+            tint: .red,
+            isSelected: false,
+            isHovered: false,
+            disabled: false
+          )
+        }
+        .buttonStyle(.plain)
+        .help("Grabar pantalla completa (se guarda automáticamente en Movies/THISCREEN)")
+        Menu {
+          Button(action: { captureManager.startRecording(mode: .selectedArea, includeMic: includeMic, showClicks: showClicks) }) {
+            Label("Record Selected Area", systemImage: "rectangle.dashed.badge.record")
+          }
+        } label: {
+          GlassIcon(
+            systemName: "video.fill",
+            size: 40,
+            tint: .red,
+            isSelected: false,
+            isHovered: false,
+            disabled: false
+          )
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 40, height: 40)
+      } else {
+        Button(action: { captureManager.stopRecording() }) {
                                         ZStack { 
                                             Circle().fill(.red).frame(width: 44, height: 44)
                                             RoundedRectangle(cornerRadius: 2).fill(.white).frame(width: 14, height: 14) 
@@ -973,22 +981,22 @@ struct ContentView: View {
         let timestamp = formatter.string(from: Date())
         let dest = dir.appendingPathComponent("THISCREEN_Recording_\(timestamp).mov")
 
-        // Perform file operation on background queue to avoid blocking UI
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try FileManager.default.copyItem(at: url, to: dest)
-                DispatchQueue.main.async {
-                    NSWorkspace.shared.activateFileViewerSelecting([dest])
-                    self.showSaveFeedback("Guardado en \(dest.path)")
-                }
-            } catch {
-                print("Error saving video to \(directory): \(error)")
-                DispatchQueue.main.async {
-                    self.saveVideoWithDialog(defaultDirectory: dir)
-                }
-            }
+    // Perform file operation on background queue to avoid blocking UI
+    DispatchQueue.global(qos: .userInitiated).async {
+      do {
+        try FileManager.default.copyItem(at: url, to: dest)
+        DispatchQueue.main.async {
+          self.showFileInFinder(url: dest)
+          self.showSaveFeedback("Guardado en \(dest.path)")
         }
+      } catch {
+        print("Error saving video to \(directory): \(error)")
+        DispatchQueue.main.async {
+          self.saveVideoWithDialog(defaultDirectory: dir)
+        }
+      }
     }
+  }
     
     func saveToSuggested(directory: FileManager.SearchPathDirectory) {
         if captureManager.lastVideoUrl != nil {
@@ -1025,18 +1033,18 @@ struct ContentView: View {
                 return
             }
 
-            do {
-                try pngData.write(to: url)
-                DispatchQueue.main.async {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    self.showSaveFeedback("Guardado en \(url.path)")
-                }
-            } catch {
-                print("Error saving image to \(directory): \(error)")
-                DispatchQueue.main.async {
-                    self.saveImageWithDialog(defaultDirectory: dir, image: finalImage)
-                }
-            }
+    do {
+      try pngData.write(to: url)
+      DispatchQueue.main.async {
+        self.showFileInFinder(url: url)
+        self.showSaveFeedback("Guardado en \(url.path)")
+      }
+    } catch {
+      print("Error saving image to \(directory): \(error)")
+      DispatchQueue.main.async {
+        self.saveImageWithDialog(defaultDirectory: dir, image: finalImage)
+      }
+    }
         }
     }
     
@@ -1056,17 +1064,17 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
     let timestamp = formatter.string(from: Date())
     let filename = "THISCREEN_Recording_\(timestamp).mov"
 
-    presentSavePanel(allowedTypes: [.quickTimeMovie], defaultDir: defaultDirectory, defaultName: filename) { dest in
-        guard let dest = dest else { return }
+  presentSavePanel(allowedTypes: [.quickTimeMovie], defaultDir: defaultDirectory, defaultName: filename) { dest in
+      guard let dest = dest else { return }
 
-        do {
-            try FileManager.default.copyItem(at: url, to: dest)
-            NSWorkspace.shared.activateFileViewerSelecting([dest])
-        } catch {
-            print("Error saving video: \(error)")
-        }
+      do {
+        try FileManager.default.copyItem(at: url, to: dest)
+        self.showFileInFinder(url: dest)
+      } catch {
+        print("Error saving video: \(error)")
+      }
     }
-}
+  }
     
     func createPixelatedNSImage(from image: NSImage) -> NSImage? {
         guard let tiff = image.tiffRepresentation, let ciImg = CIImage(data: tiff) else { return nil }
@@ -1116,42 +1124,73 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
         }
     }
     
-    func applyCrop(viewportSize: CGSize, currentZoomScale: CGFloat, currentPanOffset: CGSize) {
-        // Capture all state values at the beginning to avoid threading issues
-        guard let img = captureManager.screenshot, let crop = cropRect else { return }
+  func applyCrop(viewportSize: CGSize, currentZoomScale: CGFloat, currentPanOffset: CGSize) {
+    // Capture all state values at the beginning to avoid threading issues
+    guard let img = captureManager.screenshot, let crop = cropRect else { return }
 
-        // Capture current elements and pixelated image before any async work
-        let currentElements = elements
-        let currentPixelatedImage = pixelatedImage
+    // Capture current elements and pixelated image before any async work
+    let currentElements = elements
+    let currentPixelatedImage = pixelatedImage
 
-        pushHistoryState()
+    pushHistoryState()
 
-        // Calculate the scale factor used to display the image
-        // Use the same logic as in the GeometryReader: max to fill the viewport
-        let baseScale = max(viewportSize.width / img.size.width, viewportSize.height / img.size.height)
-        let displayScale = baseScale * currentZoomScale
+    // Calculate the scale factor used to display the image
+    // Use min() to match the display logic: fit within viewport maintaining aspect ratio
+    let baseScale = min(viewportSize.width / img.size.width, viewportSize.height / img.size.height)
+    let displayScale = baseScale * currentZoomScale
 
-        // Calculate the actual displayed image size
-        let displayedImageWidth = img.size.width * displayScale
-        let displayedImageHeight = img.size.height * displayScale
+    // The cropRect is drawn in the InteractiveDrawingView which is inside a ZStack
+    // that has scaleEffect and offset applied. The InteractiveDrawingView has a frame
+    // of img.size, and the cropRect coordinates are in that space (canvas coordinates).
+    // However, the drag gesture captures coordinates that are already transformed.
+    //
+    // To convert from canvas coordinates to image coordinates:
+    // - The canvas size is img.size * displayScale (visually)
+    // - But the cropRect is stored in the coordinate space of the canvas view
+    // - We need to account for the fact that the canvas is centered and panned
+    //
+    // The canvas is positioned at:
+    // center: (viewportSize.width/2, viewportSize.height/2)
+    // offset: currentPanOffset
+    // scale: displayScale
+    //
+    // The cropRect coordinates are relative to the canvas origin (top-left of the image)
+    // But the canvas origin is not at (0,0) of the viewport due to centering and panning
 
-        // Calculate the offset needed to center the image (same as in GeometryReader)
-        let centeringOffsetX = (viewportSize.width - displayedImageWidth) / 2
-        let centeringOffsetY = (viewportSize.height - displayedImageHeight) / 2
+    // Calculate where the top-left corner of the image is in viewport coordinates
+    let displayedImageWidth = img.size.width * displayScale
+    let displayedImageHeight = img.size.height * displayScale
+    let centeringOffsetX = (viewportSize.width - displayedImageWidth) / 2
+    let centeringOffsetY = (viewportSize.height - displayedImageHeight) / 2
 
-        // Convert crop rect from screen coordinates to image coordinates
-        // Account for: centering offset, pan offset, and scale
-        let imageCropX = (crop.origin.x - centeringOffsetX - currentPanOffset.width) / displayScale
-        let imageCropY = (crop.origin.y - centeringOffsetY - currentPanOffset.height) / displayScale
-        let imageCropWidth = crop.size.width / displayScale
-        let imageCropHeight = crop.size.height / displayScale
+    // The image origin in viewport coordinates (after centering and panning)
+    let imageOriginX = centeringOffsetX + currentPanOffset.width
+    let imageOriginY = centeringOffsetY + currentPanOffset.height
 
-        let imageCropRect = CGRect(
-            x: max(0, min(imageCropX, img.size.width)),
-            y: max(0, min(imageCropY, img.size.height)),
-            width: min(imageCropWidth, img.size.width - max(0, imageCropX)),
-            height: min(imageCropHeight, img.size.height - max(0, imageCropY))
-        )
+    // The cropRect is in canvas coordinates (same as image coordinates when zoom = 1)
+    // But we need to convert it to actual image coordinates by dividing by the scale
+    // The crop rect is drawn at the gesture location, which is in the transformed space
+    // So we need to convert from canvas space to image space
+
+    // The canvas coordinate system: origin is at top-left of the image
+    // crop.origin is in canvas coordinates (0 to img.size.width, 0 to img.size.height)
+    // But because of scaleEffect, the actual coordinate values might be scaled
+
+    // Actually, the cropRect is captured in the DragGesture which gives coordinates
+    // in the view's coordinate space. Since the view has scaleEffect applied,
+    // the coordinates are already scaled. We need to divide by displayScale.
+
+    let imageCropX = crop.origin.x / displayScale
+    let imageCropY = crop.origin.y / displayScale
+    let imageCropWidth = crop.size.width / displayScale
+    let imageCropHeight = crop.size.height / displayScale
+
+    let imageCropRect = CGRect(
+      x: max(0, min(imageCropX, img.size.width)),
+      y: max(0, min(imageCropY, img.size.height)),
+      width: min(imageCropWidth, img.size.width - max(0, imageCropX)),
+      height: min(imageCropHeight, img.size.height - max(0, imageCropY))
+    )
 
         // Ensure valid crop rect
         guard imageCropRect.width > 0 && imageCropRect.height > 0 else {
@@ -1400,17 +1439,37 @@ private func saveImageWithDialog(defaultDirectory: URL?, image: NSImage) {
     presentSavePanel(allowedTypes: [.png], defaultDir: defaultDirectory, defaultName: filename) { url in
         guard let url = url else { return }
 
-        do {
-            try pngData.write(to: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } catch {
-            print("Error saving image: \(error)")
-        }
+      do {
+        try pngData.write(to: url)
+        self.showFileInFinder(url: url)
+      } catch {
+        print("Error saving image: \(error)")
+      }
     }
-}
+  }
 
-    @MainActor
-    private func showSaveFeedback(_ message: String) {
+  /// Shows the saved file in Finder, temporarily lowering window level so Finder appears above
+  @MainActor
+  private func showFileInFinder(url: URL) {
+    // Temporarily lower window level so Finder can appear above
+    if let window = WindowManager.shared.windowController?.window {
+      let originalLevel = window.level
+      window.level = .normal
+
+      // Show file in Finder
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+
+      // Restore window level after a short delay
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        window.level = originalLevel
+      }
+    } else {
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+  }
+
+  @MainActor
+  private func showSaveFeedback(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "THISCREEN"
         alert.informativeText = message

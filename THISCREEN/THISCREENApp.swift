@@ -53,18 +53,19 @@ class WindowManager: NSObject, NSWindowDelegate {
         // Start hidden — no "Ready for Capture" screen at launch
     }
 
-  // MARK: Overlay configuration
-  func configureOverlay(_ window: NSWindow) {
-    // Above .floating and .statusBar — appears over full‑screen apps
-    window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
-    // canJoinAllSpaces: visible in all spaces (Mission Control)
-    // fullScreenAuxiliary: can appear over full-screen apps
-    // stationary: window stays in its space when user switches spaces
-    window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .transient]
-    window.isMovable = true
-    window.isMovableByWindowBackground = false // Fix: drawing shapes won't move window
-    window.hidesOnDeactivate = false
-  }
+    // MARK: Overlay configuration
+    func configureOverlay(_ window: NSWindow) {
+        // Use screenSaver level + 1 to appear above everything including popups, menus, and other apps
+        // This is higher than popUpMenu, modalPanel, floating, etc.
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
+        // canJoinAllSpaces: visible in all spaces (Mission Control)
+        // fullScreenAuxiliary: can appear over full-screen apps
+        // stationary: window stays in its space when user switches spaces
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .transient]
+        window.isMovable = true
+        window.isMovableByWindowBackground = false // Fix: drawing shapes won't move window
+        window.hidesOnDeactivate = false
+    }
 
     // MARK: Show / Hide
     func show() {
@@ -117,7 +118,7 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.orderFrontRegardless()
 
         // Force window level to ensure it appears above other windows
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
 
         isVisible = true
         print("[WindowManager] Window is now visible on current screen")
@@ -206,7 +207,7 @@ class WindowManager: NSObject, NSWindowDelegate {
         window.orderFrontRegardless()
 
         // Force window level to ensure it appears above other windows
-        window.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+        window.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
 
         isVisible = true
         print("[WindowManager] Window is now visible with fitted size on current screen")
@@ -274,28 +275,30 @@ class StatusBarManager {
 
         menu.addItem(.separator())
 
+        // Capture section
         let captureItem = NSMenuItem(title: "Capture Area (⌘⇧S)",
                                      action: #selector(captureArea),
-                                     keyEquivalent: "")
+                                     keyEquivalent: "s")
+        captureItem.keyEquivalentModifierMask = [.command, .shift]
         captureItem.target = self
         menu.addItem(captureItem)
 
-        let recordMenu = NSMenu()
-        let entireItem = NSMenuItem(title: "Entire Screen (⌘⇧A)",
+        menu.addItem(.separator())
+
+        // Recording section
+        let recordItem = NSMenuItem(title: "Record Screen (⌘⇧A)",
                                     action: #selector(recordEntireScreen),
-                                    keyEquivalent: "")
-        entireItem.target = self
-        recordMenu.addItem(entireItem)
-
-        let areaItem = NSMenuItem(title: "Selected Area (⌘⇧R)",
-                                  action: #selector(recordSelectedArea),
-                                  keyEquivalent: "")
-        areaItem.target = self
-        recordMenu.addItem(areaItem)
-
-        let recordItem = NSMenuItem(title: "Record...", action: nil, keyEquivalent: "")
-        recordItem.submenu = recordMenu
+                                    keyEquivalent: "a")
+        recordItem.keyEquivalentModifierMask = [.command, .shift]
+        recordItem.target = self
         menu.addItem(recordItem)
+
+        let recordAreaItem = NSMenuItem(title: "Record Selected Area (⌘⇧R)",
+                                        action: #selector(recordSelectedArea),
+                                        keyEquivalent: "r")
+        recordAreaItem.keyEquivalentModifierMask = [.command, .shift]
+        recordAreaItem.target = self
+        menu.addItem(recordAreaItem)
 
         menu.addItem(.separator())
 

@@ -16,38 +16,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "1082"
             endingLineNumber = "1082"
-            landmarkName = "makePNGData(from:)"
+            landmarkName = "createPixelatedNSImage(from:)"
             landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "8B81CE52-D068-4C4A-8067-35675DF353B7 - 8a5bf9534e0eb883"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "THISCREEN.ContentView.createPixelatedNSImage(from: __C.NSImage) -&gt; Swift.Optional&lt;__C.NSImage&gt;"
-                  moduleName = "THISCREEN.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/joel/Documents/workspace/programar/thisuite/thiscreen/THISCREEN/ContentView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "1082"
-                  endingLineNumber = "1082">
-               </Location>
-               <Location
-                  uuid = "8B81CE52-D068-4C4A-8067-35675DF353B7 - eeb290a922c92ef1"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "THISCREEN.ContentView.makePNGData(from: Swift.Optional&lt;__C.NSImage&gt;) -&gt; Swift.Optional&lt;Foundation.Data&gt;"
-                  moduleName = "THISCREEN.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/joel/Documents/workspace/programar/thisuite/thiscreen/THISCREEN/ContentView.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "1082"
-                  endingLineNumber = "1082">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>

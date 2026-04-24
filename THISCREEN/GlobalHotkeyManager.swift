@@ -12,14 +12,18 @@ class GlobalHotkeyManager {
 
         let cmdShift = UInt32(cmdKey | shiftKey)
 
-        // Ensure the handler is installed once for all hotkeys
-        installHandler()
+    // Ensure the handler is installed once for all hotkeys
+    installHandler()
 
-        // S = 1, R = 15, X = 7, A = 0
+        // Key codes: S = 1, A = 0, T = 17, R = 15
+        // ⌘⇧S: Capture Area
         register(keyCode: 1, modifiers: cmdShift, id: 1, notification: "TriggerCapture")
-        register(keyCode: 15, modifiers: cmdShift, id: 2, notification: "TriggerRecord")
-        register(keyCode: 7, modifiers: cmdShift, id: 3, notification: "TriggerStopRecord")
+        // ⌘⇧A: Record Screen (full screen)
         register(keyCode: 0, modifiers: cmdShift, id: 4, notification: "TriggerEntireRecord")
+        // ⌘⇧R: Record Selected Area
+        register(keyCode: 15, modifiers: cmdShift, id: 5, notification: "TriggerRecordSelectedArea")
+        // ⌘⇧T: Stop Recording
+        register(keyCode: 17, modifiers: cmdShift, id: 3, notification: "TriggerStopRecord")
 
         print("[GlobalHotkeyManager] Hotkeys setup complete")
     }
@@ -41,6 +45,7 @@ class GlobalHotkeyManager {
                 case 2: noteName = "TriggerRecord"
                 case 3: noteName = "TriggerStopRecord"
                 case 4: noteName = "TriggerEntireRecord"
+                case 5: noteName = "TriggerRecordSelectedArea"
                 default: return noErr
                 }
                 
