@@ -29,8 +29,23 @@ class AreaSelectorWindowController: NSObject {
         // Create the tracking view
         let trackingView = AreaTrackingView(frame: NSRect(origin: .zero, size: screenFrame.size))
         trackingView.onComplete = { [weak self] rect in
-            self?.dismiss()
-            self?.completionHandler?(rect)
+            guard let self = self else { return }
+            
+            // screencapture -R expects coordinates with origin at Top-Left of the primary screen
+            // AppKit uses origin at Bottom-Left of the primary screen
+            if let primaryScreen = NSScreen.screens.first {
+                let globalRect = NSRect(
+                    x: targetScreen.frame.origin.x + rect.origin.x,
+                    y: primaryScreen.frame.height - (targetScreen.frame.origin.y + rect.origin.y + rect.size.height),
+                    width: rect.size.width,
+                    height: rect.size.height
+                )
+                self.dismiss()
+                self.completionHandler?(globalRect)
+            } else {
+                self.dismiss()
+                self.completionHandler?(rect)
+            }
         }
         trackingView.onCancel = { [weak self] in
             self?.dismiss()

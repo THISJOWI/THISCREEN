@@ -128,32 +128,32 @@ struct InteractiveDrawingView: View {
           context.stroke(Path(crop), with: .color(.white), lineWidth: 1.5)
         }
       }
-      // GESTO PARA SELECT (mover elementos) - solo activo cuando currentTool == .select
       .highPriorityGesture(
-        currentTool == .select ?
-        DragGesture(minimumDistance: 0)
-        .onChanged { value in
-          if dragStartPoint == nil {
-            findElementAt(value.startLocation)
-            dragStartPoint = .zero
+        currentTool == .select ? (
+          DragGesture(minimumDistance: 0)
+          .onChanged { value in
+            if dragStartPoint == nil {
+              print("Select Gesture StartLocation: \(value.startLocation)")
+              findElementAt(value.startLocation)
+              dragStartPoint = .zero
+            }
+            if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
+              let translation = CGSize(width: value.translation.width - dragStartPoint!.x, height: value.translation.height - dragStartPoint!.y)
+              elements[index].translate(by: translation)
+              dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
+            }
           }
-          if let selectedID = selectedElementID, let index = elements.firstIndex(where: { $0.id == selectedID }) {
-            let translation = CGSize(width: value.translation.width - dragStartPoint!.x, height: value.translation.height - dragStartPoint!.y)
-            elements[index].translate(by: translation)
-            dragStartPoint = CGPoint(x: value.translation.width, y: value.translation.height)
+          .onEnded { _ in
+            dragStartPoint = nil
           }
-        }
-        .onEnded { _ in
-          dragStartPoint = nil
-        }
-        : nil
+        ) : nil
       )
       // GESTO PARA DIBUJAR - solo activo cuando currentTool es de dibujo (no select, no text)
       .highPriorityGesture(
-        (currentTool != .select && currentTool != .text) ?
-        DragGesture(minimumDistance: 0)
-        .onChanged { value in
-          switch currentTool {
+        (currentTool != .select && currentTool != .text) ? (
+          DragGesture(minimumDistance: 0)
+          .onChanged { value in
+            switch currentTool {
           case .crop:
             let start = value.startLocation
             let end = value.location
@@ -181,7 +181,7 @@ struct InteractiveDrawingView: View {
             currentElement = nil
           }
         }
-        : nil
+        ) : nil
       )
       .allowsHitTesting(currentTool != .text)
 
@@ -1167,23 +1167,13 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
     let imageOriginX = centeringOffsetX + currentPanOffset.width
     let imageOriginY = centeringOffsetY + currentPanOffset.height
 
-    // The cropRect is in canvas coordinates (same as image coordinates when zoom = 1)
-    // But we need to convert it to actual image coordinates by dividing by the scale
-    // The crop rect is drawn at the gesture location, which is in the transformed space
-    // So we need to convert from canvas space to image space
-
-    // The canvas coordinate system: origin is at top-left of the image
-    // crop.origin is in canvas coordinates (0 to img.size.width, 0 to img.size.height)
-    // But because of scaleEffect, the actual coordinate values might be scaled
-
-    // Actually, the cropRect is captured in the DragGesture which gives coordinates
-    // in the view's coordinate space. Since the view has scaleEffect applied,
-    // the coordinates are already scaled. We need to divide by displayScale.
-
-    let imageCropX = crop.origin.x / displayScale
-    let imageCropY = crop.origin.y / displayScale
-    let imageCropWidth = crop.size.width / displayScale
-    let imageCropHeight = crop.size.height / displayScale
+    // The cropRect is in canvas coordinates (same as image coordinates 0 to img.size.width/height)
+    // because it was captured by a DragGesture on a view with that frame.
+    // SwiftUI's DragGesture location is in local coordinates, which are independent of scaleEffect.
+    let imageCropX = crop.origin.x
+    let imageCropY = crop.origin.y
+    let imageCropWidth = crop.size.width
+    let imageCropHeight = crop.size.height
 
     let imageCropRect = CGRect(
       x: max(0, min(imageCropX, img.size.width)),
@@ -1198,44 +1188,30 @@ private func saveVideoWithDialog(defaultDirectory: URL?) {
             return
         }
 
-        // Create the cropped image by rendering just the crop region
-        // Use a simpler approach without nested InteractiveDrawingView
-        let renderer = ImageRenderer(content: 
-            ZStack {
-                Image(nsImage: img).resizable()
-                // Draw elements directly using Canvas
-                Canvas { context, size in
-                    let resolvedPixelated: GraphicsContext.ResolvedImage? = currentPixelatedImage.map { context.resolve(Image(nsImage: $0)) }
-                    for element in currentElements {
-                        drawElementInContext(context: &context, element: element, size: size, resolvedPixelated: resolvedPixelated)
-                    }
-                }
-                .frame(width: img.size.width, height: img.size.height)
-            }
-            .frame(width: img.size.width, height: img.size.height)
-            // Offset to position the crop region at origin
-            .offset(x: -imageCropRect.minX, y: -imageCropRect.minY)
-            .frame(width: imageCropRect.width, height: imageCropRect.height)
-            .clipped()
-        )
+        // Create the cropped image using a drawing handler to maintain resolution independence
+        let newScreenshot = NSImage(size: imageCropRect.size, flipped: false) { rect in
+            let sourceRect = NSRect(x: imageCropRect.origin.x,
+                                    y: img.size.height - imageCropRect.origin.y - imageCropRect.size.height,
+                                    width: imageCropRect.size.width,
+                                    height: imageCropRect.size.height)
+            img.draw(in: rect, from: sourceRect, operation: .copy, fraction: 1.0)
+            return true
+        }
 
-        if let cgImage = renderer.cgImage {
-            let newScreenshot = NSImage(cgImage: cgImage, size: imageCropRect.size)
-            DispatchQueue.main.async {
-                self.ignoreChanges = true
-                withAnimation {
-                    self.captureManager.screenshot = newScreenshot
-                    self.elements.removeAll()
-                    self.redoStack.removeAll()
-                    self.pixelatedImage = nil
-                    self.cropRect = nil
-                    self.zoomScale = 1.0
-                    self.baseZoomScale = 1.0
-                    self.panOffset = .zero
-                    self.panStartOffset = .zero
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.ignoreChanges = false }
+        DispatchQueue.main.async {
+            self.ignoreChanges = true
+            withAnimation {
+                self.captureManager.screenshot = newScreenshot
+                self.elements.removeAll()
+                self.redoStack.removeAll()
+                self.pixelatedImage = nil
+                self.cropRect = nil
+                self.zoomScale = 1.0
+                self.baseZoomScale = 1.0
+                self.panOffset = .zero
+                self.panStartOffset = .zero
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.ignoreChanges = false }
         }
     }
 
@@ -1549,4 +1525,3 @@ extension View {
         self.modifier(MouseWheelZoomModifier(zoomScale: zoomScale, baseZoomScale: baseZoomScale))
     }
 }
-
