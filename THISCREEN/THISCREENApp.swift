@@ -218,10 +218,19 @@ class WindowManager: NSObject, NSWindowDelegate {
         isVisible = false
     }
 
-    // MARK: NSWindowDelegate — intercept close button (keep alive)
+    // MARK: NSWindowDelegate — intercept close/minimize (keep alive)
     func windowWillClose(_ notification: Notification) {
         isVisible = false
-        // Don't quit — just hide the window so it can reopen
+    }
+
+    func windowWillMiniaturize(_ notification: Notification) {
+        // Since this app uses .accessory activation policy (no Dock icon),
+        // AppKit can't properly minimize the window. Instead, hide it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.windowController?.window?.orderOut(nil)
+            self.isVisible = false
+        }
     }
 }
 
